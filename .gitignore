@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.spec
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Configurações e logs locais do usuário (gerados em runtime)
+*.local.json
+
+# IDEs
+.vscode/
+.idea/
+
+# PyInstaller
+*.manifest
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Arquivos temporários do FileMorph
+.filemorph_tmp/
