@@ -1,0 +1,21 @@
+# Finais de linha fixos, independentes da configuração de cada máquina.
+#
+# Sem isto, o Git do Windows (core.autocrlf=true) troca LF por CRLF ao
+# clonar, e o projeto inteiro apareceria como modificado para quem
+# trabalhasse em outro sistema. O código-fonte fica em LF; apenas o
+# .bat precisa de CRLF, porque o interpretador de lote do Windows não
+# lida bem com arquivos em LF.
+
+* text=auto eol=lf
+
+*.bat text eol=crlf
+
+# Binários: nunca converter.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.ttf binary
+*.otf binary
