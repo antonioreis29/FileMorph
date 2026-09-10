@@ -190,6 +190,55 @@ A ferramenta remove o fundo, centra o desenho num quadrado e grava o
 só reinstalar: o `install.ps1` lê o arquivo no momento em que cria o
 atalho.
 
+## Distribuindo para outra pessoa
+
+Os dois caminhos acima instalam **a partir do código-fonte** e exigem
+que a máquina de destino tenha Python 3.12+. Para enviar o FileMorph a
+alguém que não tem Python — e mandar um arquivo só —, gere o
+instalador:
+
+```powershell
+.\empacotar.ps1
+```
+
+São dois passos encadeados:
+
+1. O **PyInstaller** empacota o aplicativo e o próprio interpretador
+   Python em `dist/FileMorph/`, conforme o `FileMorph.spec`. Essa pasta
+   já roda sozinha em qualquer Windows.
+2. O **Inno Setup** embrulha essa pasta em
+   `dist/installer/FileMorph-<versão>-setup.exe`, conforme o
+   `installer/FileMorph.iss`. É esse arquivo, de cerca de 50 MB, que se
+   envia.
+
+O `setup.exe` instala sem pedir privilégio de administrador, cria os
+atalhos, registra o programa em Configurações > Aplicativos e gera o
+próprio desinstalador. Nada disso precisa do `install.ps1` nem do
+`desinstalar.ps1`, que continuam servindo à instalação a partir do
+código-fonte.
+
+O segundo passo é opcional: sem o Inno Setup instalado, o script avisa
+e para depois do executável, que já pode ser zipado e enviado.
+
+```powershell
+.\empacotar.ps1 -SomenteExe   # pula o instalador
+.\empacotar.ps1 -SemLimpar    # reaproveita a build anterior, mais rápido
+```
+
+Para instalar o Inno Setup: `winget install JRSoftware.InnoSetup`.
+
+O FFmpeg continua sendo dependência externa nos dois caminhos: sem ele,
+áudio e vídeo simplesmente não aparecem no seletor de formato.
+
+## Desinstalando
+
+Configurações > Aplicativos > FileMorph > Desinstalar, nos dois casos.
+
+As suas configurações (`%APPDATA%\FileMorph`) e os arquivos já
+convertidos (`Documentos\FileMorph\Convertidos`) **não** são apagados:
+foram criados pelo aplicativo em tempo de execução, não pelo
+instalador. Reinstalar depois reaproveita tudo.
+
 ## Instalação (ambiente de desenvolvimento)
 
 ```bash

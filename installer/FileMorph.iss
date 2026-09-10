@@ -49,6 +49,15 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
 
+; Sem isto, o proprio setup.exe sai com o campo "Versao do arquivo"
+; vazio em Propriedades > Detalhes. Nao afeta a instalacao, mas um
+; instalador anonimo e mais facil de confundir com outro, e o Windows
+; usa esse campo em alguns avisos de seguranca.
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductName={#MyAppName}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription=Instalador do {#MyAppName}
+
 ; PrivilegesRequired=lowest instala para o usuario atual, sem pedir
 ; elevacao — a mesma escolha do install.ps1. O destino cai em
 ; %LOCALAPPDATA%\Programs, e nao em C:\Program Files, porque escrever
@@ -123,7 +132,12 @@ Type: filesandordirs; Name: "{app}\.filemorph_tmp"
 // aparece toda vez que alguem desinstala algo.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if CurUninstallStep = usPostUninstall then
+  // UninstallSilent e obrigatorio na condicao: uma desinstalacao
+  // silenciosa (/VERYSILENT) nao tem ninguem na frente da tela, e uma
+  // caixa de mensagem ali trava o processo esperando um clique que
+  // nunca vem — quebrando justamente a automacao que o modo silencioso
+  // existe para permitir.
+  if (CurUninstallStep = usPostUninstall) and (not UninstallSilent) then
   begin
     MsgBox('O FileMorph foi removido.' + #13#10 + #13#10 +
            'Suas configuracoes e os arquivos ja convertidos NAO foram apagados. ' +

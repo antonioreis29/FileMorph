@@ -105,7 +105,18 @@ function Find-Python {
 }
 
 function Find-Inno {
+    <#
+        Procura o compilador do Inno Setup.
+
+        O caminho em %LOCALAPPDATA%\Programs não é exótico: é onde o
+        instalador cai quando é executado sem privilégio de
+        administrador, que é o caso de um `winget install` comum. Uma
+        busca que olhasse só em Program Files concluiria que a
+        ferramenta não existe numa máquina onde ela está instalada e
+        funcionando.
+    #>
     $candidatos = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
     )
