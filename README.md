@@ -20,14 +20,18 @@ quando existe de verdade no aplicativo:
   "Juntar", que une vários PDFs e imagens em um único PDF.
 - ✅ **FASE 5 — fila de processamento real**: progresso de dentro das
   tarefas e cancelamento que interrompe a conversão já em andamento.
-- ⏳ **FASE 6 em diante** (áudio/vídeo, documentos, mascote animado,
-  build do executável) ainda **não foram implementadas**.
+- ✅ **FASE 6 — áudio e vídeo** via FFmpeg: MP3, WAV, FLAC, OGG e M4A
+  em qualquer combinação; MP4, MKV e WEBM entre si; e a extração da
+  trilha sonora de um vídeo como arquivo de áudio.
+- ⏳ **FASE 7 em diante** (documentos, mascote animado, build do
+  executável) ainda **não foram implementadas**.
 
 O princípio de projeto continua valendo: a interface só oferece
 operações que existem de fato — não há botões ou opções "decorativas"
-simulando funcionalidades inexistentes. Se você adicionar um MP4 ou um
-DOCX, o seletor de formato fica vazio e o botão principal desabilitado,
-porque ainda não existe conversor registrado para esses formatos.
+simulando funcionalidades inexistentes. Se você adicionar um DOCX, o
+seletor de formato fica vazio e o botão principal desabilitado, porque
+ainda não existe conversor registrado para esse formato. O mesmo vale
+para um MP4 em uma máquina sem FFmpeg instalado.
 
 ### O que a Fase 3 já faz
 
@@ -98,6 +102,41 @@ fila entrega a cada tarefa: por ele a operação reporta o andamento e
 pergunta se deve parar. O módulo é livre de Qt de propósito, para que os
 conversores não dependam da interface.
 
+### O que a Fase 6 acrescentou
+
+Áudio e vídeo, via **FFmpeg** — o primeiro conversor do FileMorph que
+depende de um programa externo em vez de uma biblioteca Python.
+
+- **Áudio**: MP3, WAV, FLAC, OGG e M4A em qualquer combinação. As tags
+  (título, artista, álbum) são preservadas; a capa do álbum é
+  descartada, porque formatos como o WAV não têm onde guardá-la e a
+  conversão falharia por causa dela.
+- **Vídeo**: MP4, MKV e WEBM entre si, além de AVI e MOV como origem.
+  O resultado é H.264 + AAC (ou VP9 + Opus no WEBM), a combinação que
+  toca em praticamente qualquer lugar.
+- **Trilha sonora de um vídeo**: um MP4 também pode virar MP3, WAV,
+  FLAC, OGG ou M4A, sem precisar de duas conversões em sequência.
+- **Progresso contínuo**: a barra acompanha a duração já processada, e
+  não etapas discretas — é o que faz um vídeo de dez minutos, que é uma
+  tarefa só, mostrar que está andando.
+- **Cancelamento real**: "Cancelar" encerra o processo do FFmpeg em
+  andamento. Como a saída sempre vai para um arquivo temporário, o que
+  já tinha sido escrito é descartado e um arquivo que já existisse no
+  destino continua intacto.
+
+**O aplicativo só oferece o que esta máquina consegue fazer.** A
+verificação é dupla: se o FFmpeg não está instalado, os conversores de
+mídia nem chegam a ser registrados e áudio/vídeo somem do seletor de
+formato; se ele está instalado mas foi compilado sem algum codificador
+(nem toda build traz `libvpx-vp9`, por exemplo), aquele formato
+específico deixa de ser oferecido — em vez de aparecer no seletor e
+falhar na hora de converter. O menu **"Verificar dependências"** mostra
+exatamente o que está habilitado nesta instalação.
+
+Vale o aviso: converter vídeo é recodificar quadro a quadro, e leva na
+ordem de grandeza da duração do próprio vídeo — não os segundos de uma
+imagem. O WEBM é o mais demorado dos três.
+
 ## Requisitos
 
 - Windows 10/11 (desenvolvido e pensado para Windows, mas roda em
@@ -108,6 +147,10 @@ conversores não dependam da interface.
   é verificado separadamente na inicialização: faltando um deles, o
   aplicativo abre normalmente e apenas as operações que dependiam
   daquela biblioteca deixam de ser oferecidas, com o motivo no log.
+- **FFmpeg** (opcional, para áudio e vídeo): não é um pacote pip. Baixe
+  em [ffmpeg.org](https://ffmpeg.org), descompacte e adicione a pasta
+  `bin` ao PATH do Windows. Sem ele o FileMorph funciona normalmente
+  para imagens e PDF.
 
 ## Instalação (ambiente de desenvolvimento)
 
@@ -137,12 +180,17 @@ motivo em vez de sumir.
 ```
 FileMorph/
 ├── main.py                  # ponto de entrada
+├── tools/                   # utilitários de desenvolvimento, fora do app
+│   ├── gerar_mascote.py     # desenha o mascote e o ícone (pixel art)
+│   └── preparar_mascote.py  # limpa o fundo de uma imagem trazida de fora
 ├── app/
 │   ├── core/                # lógica central: conversão, junção, fila,
 │   │                          validação — nada de UI aqui
-│   ├── converters/          # um módulo por família de formato;
-│   │                          image_converter.py e pdf_converter.py
-│   │                          implementados, os demais são stubs
+│   ├── converters/          # um módulo por família de formato:
+│   │                          image, pdf, audio e video implementados
+│   │                          (media_converter.py é a base comum dos
+│   │                          dois últimos); document e spreadsheet
+│   │                          ainda são stubs
 │   ├── mergers/             # um módulo por família de junção;
 │   │                          pdf_merger.py implementado
 │   ├── ui/                  # janelas e widgets PySide6
@@ -156,13 +204,62 @@ A UI nunca conversa diretamente com Pillow/pypdf/FFmpeg etc. Ela passa
 por `app/core/processor.py`, que consulta a camada de compatibilidade
 (`app/core/converter.py` / `app/core/merger.py`) para saber o que é
 realmente possível, e delega a execução para o conversor/merger
-registrado.
+registrado. `app/utils/ffmpeg_manager.py` é o único lugar do projeto
+que cria um processo externo: é ele que detecta o FFmpeg, lista os
+codificadores disponíveis, lê o andamento da conversão e traduz um erro
+do FFmpeg em uma frase em português.
 
 Quem preenche essa camada são `app/converters/__init__.py` e
 `app/mergers/__init__.py`, chamados uma única vez no `main.py`. Eles só
 registram um conversor/merger se a biblioteca dele estiver de fato
 instalada — é assim que a interface continua honesta em uma máquina sem
 Pillow ou sem PyMuPDF, por exemplo.
+
+## Identidade visual e mascote
+
+O tema tem três variantes (claro, escuro, sistema) e uma paleta só, em
+`app/ui/styles.py`. As cores saem do mascote — são os tons do sprite —
+com os papéis separados: **o rosa pastel é superfície** (fundos, área de
+arrastar) e **o ameixa saturado é interação** (botões, progresso, foco).
+O campo `on_accent` existe porque os dois temas discordam sobre o texto
+em cima do destaque: branco no claro, ameixa no escuro, onde o botão é
+rosa claro.
+
+A arte é gerada por código, não editada em um programa de imagem:
+
+```bash
+python tools/gerar_mascote.py
+```
+
+Isso reescreve `assets/icons/filemorph.ico` (com 16, 32, 48, 64, 128 e
+256 px) e `assets/mascot/ditto.png`. Silhueta, cores e rosto são números
+no topo do script, então ajustar a arte é editar texto — e a diferença
+entre duas versões aparece no diff. Os dois tamanhos pequenos são
+desenhados em separado de propósito: reduzir a arte de 32 px pela metade
+quebra o contorno, porque detalhe de um pixel não sobrevive à divisão.
+
+**Trocando o mascote.** Nada disso é obrigatório. A janela usa
+`assets/mascot/ditto.png` e, se ele não existir, a primeira imagem que
+encontrar na pasta — então jogar um PNG ali dentro já funciona, com o
+nome que for. O ícone do atalho é o que estiver em
+`assets/icons/filemorph.ico`. Se a imagem sumir, o aplicativo abre
+normalmente, apenas sem a figura.
+
+Vale passar a imagem pelo preparador antes:
+
+```bash
+python tools/preparar_mascote.py caminho/da/imagem.png
+```
+
+Ele existe por um motivo prático. Pixel art baixada da internet quase
+sempre vem salva como JPEG (às vezes com extensão `.png`, o que
+engana), e JPEG não tem canal de transparência: o xadrez cinza que o
+editor desenha para *representar* o fundo transparente acaba gravado
+como pixel de verdade. Posta direto na janela, a imagem aparece com um
+tabuleiro em volta — gritante no tema escuro. O preparador remove o
+fundo por saturação (o xadrez é cinza; o contorno preto do desenho é
+escuro e sobrevive ao teste), recorta a margem morta e grava um PNG com
+transparência de verdade em `assets/mascot/ditto.png`.
 
 ## Configuração e logs
 
@@ -181,20 +278,30 @@ python -m pytest tests
 
 A suíte cobre a camada de compatibilidade, a validação de arquivos, a
 contabilidade da fila de tarefas, as conversões de imagem e de PDF, a
-junção e o progresso/cancelamento — tudo de verdade, gerando os
-arquivos na hora e conferindo o resultado (inclusive a ordem das
-páginas do PDF final e o fato de que cancelar não deixa sobras). Não
-depende de arquivos externos nem de rede.
+junção, as conversões de áudio/vídeo e o progresso/cancelamento — tudo
+de verdade, gerando os arquivos na hora e conferindo o resultado
+(inclusive a ordem das páginas do PDF final e o fato de que cancelar
+não deixa sobras). Não depende de arquivos externos nem de rede.
 
-## Próximos passos (Fase 6+)
+A única exceção é o FFmpeg, que não é uma biblioteca Python: exigi-lo
+instalado transformaria metade da suíte em "pulado" para quem só quer
+rodar os testes. No lugar dele entra `tests/fake_ffmpeg.py`, um
+programa que imita a parte do FFmpeg que o FileMorph usa de fato — ele
+responde a `-encoders`, publica blocos de progresso e grava o arquivo
+de saída. Assim o código exercitado é o de produção (leitura do
+andamento, encerramento do processo, tradução do erro, gravação
+atômica), e a única peça falsa é o binário do outro lado do cano.
+
+## Próximos passos (Fase 7+)
 
 Ver o prompt de desenvolvimento original para a ordem completa de
 implementação. Resumidamente:
 
-- **Fase 6 — áudio e vídeo** via FFmpeg, que já é detectado pelo menu
-  "Verificar dependências". Será o primeiro conversor a depender de um
-  binário externo, e o primeiro capaz de reportar progresso contínuo
-  (percentual de duração), e não em etapas discretas.
-- **Depois**: documentos, mascote animado e o build do executável.
+- **Fase 7 — documentos**: DOCX e TXT, possivelmente dependendo do
+  LibreOffice em modo headless, o segundo binário externo do projeto.
+- **Depois**: mascote animado e o build do executável.
 - **Ainda em imagens**: BMP, TIFF e GIF, que ficaram fora da Fase 3 por
   exigirem tratamento próprio (paleta e animação).
+- **Ainda em mídia**: opções de qualidade escolhidas pelo usuário
+  (hoje cada formato tem um perfil fixo, pensado para o uso comum) e
+  corte por trecho.

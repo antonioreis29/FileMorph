@@ -11,11 +11,12 @@ converter ou juntar arquivos. Ele:
 3. Traduz o resultado de cada tarefa em algo que a UI entende
    (sucesso/erro por arquivo — item 22).
 
-A partir da Fase 3 este módulo executa conversões de verdade, e a Fase
-4 acrescentou o PDF e a primeira junção real. Para as famílias de
-formato ainda não implementadas (áudio, vídeo, documentos), a resposta
-continua sendo um resultado de falha explicando que a operação não
-existe nesta versão — nunca uma conversão simulada.
+A partir da Fase 3 este módulo executa conversões de verdade: a Fase 4
+acrescentou o PDF e a primeira junção real, e a Fase 6 trouxe áudio e
+vídeo via FFmpeg. Para as famílias de formato ainda não implementadas
+(documentos, planilhas), a resposta continua sendo um resultado de
+falha explicando que a operação não existe nesta versão — nunca uma
+conversão simulada.
 """
 
 from __future__ import annotations

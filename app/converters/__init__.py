@@ -1,5 +1,5 @@
 """
-Registro dos conversores concretos disponíveis (FASE 3).
+Registro dos conversores concretos disponíveis.
 
 Este pacote é o único lugar que sabe *quais* conversores existem de
 fato. O restante do aplicativo conversa apenas com a camada de
@@ -11,6 +11,11 @@ não estiver instalada nesta máquina, o conversor simplesmente não é
 registrado — e a interface, que só oferece o que está registrado,
 continua honesta em vez de apresentar uma opção que falharia na hora
 de converter (item 37).
+
+A partir da Fase 6 a checagem vai um passo além para áudio e vídeo:
+não basta o FFmpeg existir, ele precisa ter os codificadores daquele
+formato compilados. Um conversor pode acabar registrado oferecendo
+apenas parte dos seus destinos.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from __future__ import annotations
 import weakref
 
 from app.core.converter import CompatibilityRegistry, compatibility_registry
+from app.utils.ffmpeg_manager import ffmpeg_manager
 from app.utils.logger import get_logger
 
 logger = get_logger("converters")
@@ -84,6 +90,41 @@ def register_builtin_converters(
                 "PyMuPDF não está instalado — converter PDF em imagens ficará "
                 "indisponível nesta execução."
             )
+
+    # --- Áudio e vídeo (FFmpeg) ------------------------------------------
+    # Diferente dos anteriores, este bloco não depende de um pacote pip e
+    # sim de um binário externo. A checagem é dupla: primeiro se o FFmpeg
+    # existe, depois quais codificadores ele traz — uma compilação enxuta
+    # pode ter libmp3lame e não ter libvpx-vp9, e nesse caso o conversor
+    # é registrado oferecendo só os formatos que consegue mesmo gerar.
+    if ffmpeg_manager.is_available():
+        from app.converters.audio_converter import AudioConverter
+        from app.converters.video_converter import (
+            VideoConverter,
+            VideoToAudioConverter,
+        )
+
+        media_converters = (
+            ("AudioConverter", AudioConverter()),
+            ("VideoConverter", VideoConverter()),
+            ("VideoToAudioConverter", VideoToAudioConverter()),
+        )
+        for name, converter in media_converters:
+            targets = converter.target_formats
+            if targets:
+                target.register(converter)
+                registered.append(f"{name} (FFmpeg: {', '.join(sorted(targets))})")
+            else:
+                logger.warning(
+                    "%s não foi registrado: esta instalação do FFmpeg não tem "
+                    "nenhum dos codificadores necessários.",
+                    name,
+                )
+    else:
+        logger.warning(
+            "FFmpeg não encontrado — conversões de áudio e vídeo ficarão "
+            "indisponíveis nesta execução."
+        )
 
     _registered_into.add(target)
 

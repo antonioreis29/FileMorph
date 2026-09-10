@@ -36,9 +36,12 @@ class ProgressWidget(QWidget):
         bottom_row = QHBoxLayout()
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 100)
-        self._progress_bar.setTextVisible(True)
+        # O percentual ja esta no rotulo acima ("3 de 8 arquivos"); dentro
+        # da barra ele so obrigaria a barra a ser alta o bastante para o texto.
+        self._progress_bar.setTextVisible(False)
 
         self._cancel_button = QPushButton("Cancelar")
+        self._cancel_button.setObjectName("cancelButton")
         self._cancel_button.clicked.connect(self.cancel_requested)
 
         bottom_row.addWidget(self._progress_bar, 1)

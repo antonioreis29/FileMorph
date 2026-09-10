@@ -16,7 +16,6 @@ from enum import Enum
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -73,48 +72,69 @@ class FileCard(QFrame):
         self.entry = entry
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(12)
-        shadow.setOffset(0, 2)
-        shadow.setColor(Qt.GlobalColor.gray)
-        self.setGraphicsEffect(shadow)
+        # Sem sombra: a antiga era cinza fixo, o que no tema escuro
+        # virava um halo sujo em volta do card. A borda do QSS ja separa.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(13, 8, 8, 8)
+        outer.setSpacing(3)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        row = QHBoxLayout()
+        row.setSpacing(10)
 
         category = get_file_category(entry.path)
         icon = _CATEGORY_ICONS.get(category or "", "📁")
         self._icon_label = QLabel(icon)
-        self._icon_label.setStyleSheet("font-size: 22px;")
+        self._icon_label.setObjectName("cardIcon")
 
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(2)
         self._name_label = QLabel(get_filename(entry.path))
-        self._name_label.setStyleSheet("font-weight: 600;")
-        ext = get_extension(entry.path).upper()
-        size = get_file_size_display(entry.path)
-        self._meta_label = QLabel(f"{ext} • {size} • {_STATUS_LABELS[entry.status.value]}")
-        self._meta_label.setObjectName("hintLabel")
-        text_layout.addWidget(self._name_label)
-        text_layout.addWidget(self._meta_label)
+        self._name_label.setObjectName("cardName")
+
+        self._status_label = QLabel(_STATUS_LABELS[entry.status.value])
+        self._status_label.setObjectName("cardStatus")
+        self._status_label.setProperty("status", entry.status.value)
 
         self._remove_button = QPushButton("×")
-        self._remove_button.setFixedSize(28, 28)
+        self._remove_button.setObjectName("cardRemove")
+        self._remove_button.setFixedSize(24, 24)
+        self._remove_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._remove_button.clicked.connect(lambda: self.remove_requested.emit(entry.path))
 
-        layout.addWidget(self._icon_label)
-        layout.addLayout(text_layout, 1)
-        layout.addWidget(self._remove_button)
+        row.addWidget(self._icon_label)
+        row.addWidget(self._name_label, 1)
+        row.addWidget(self._status_label)
+        row.addWidget(self._remove_button)
+        outer.addLayout(row)
+
+        # O motivo de um erro e longo demais para caber na linha; ele
+        # ganha uma segunda linha, que so existe quando ha erro.
+        self._error_label = QLabel()
+        self._error_label.setObjectName("cardError")
+        self._error_label.setWordWrap(True)
+        self._error_label.hide()
+        outer.addWidget(self._error_label)
+
+        # Extensao e tamanho saem da linha para nao competir com o nome,
+        # mas continuam a um passe de mouse de distancia.
+        ext = get_extension(entry.path).upper()
+        self.setToolTip(f"{ext} • {get_file_size_display(entry.path)}\n{entry.path}")
 
     def set_status(self, status: FileStatus, error_message: str | None = None) -> None:
         self.entry.status = status
         self.entry.error_message = error_message
-        ext = get_extension(self.entry.path).upper()
-        size = get_file_size_display(self.entry.path)
-        text = f"{ext} • {size} • {_STATUS_LABELS[status.value]}"
+
+        self._status_label.setText(_STATUS_LABELS[status.value])
+        # A cor do status vem do QSS por propriedade dinamica, para que
+        # todas as cores continuem morando na paleta. Trocar a
+        # propriedade exige repolir o widget para o Qt reavaliar a regra.
+        self._status_label.setProperty("status", status.value)
+        self._status_label.style().unpolish(self._status_label)
+        self._status_label.style().polish(self._status_label)
+
         if status == FileStatus.ERROR and error_message:
-            text += f" — {error_message}"
-        self._meta_label.setText(text)
+            self._error_label.setText(error_message)
+            self._error_label.show()
+        else:
+            self._error_label.hide()
 
 
 class FileListWidget(QScrollArea):

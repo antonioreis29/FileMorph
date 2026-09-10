@@ -9,16 +9,19 @@ quem decide o que fazer com eles é o widget pai (main_window.py).
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QLabel,
-    QPushButton,
     QVBoxLayout,
 )
 
 from app.core.file_validator import validate_paths
+from app.ui.mascot import load_mascot_pixmap
+
+# Altura do mascote dentro da area de arrastar.
+MASCOT_HEIGHT = 76
 
 
 class FileDropArea(QFrame):
@@ -34,30 +37,36 @@ class FileDropArea(QFrame):
         self.setMinimumHeight(180)
         self.setProperty("dragActive", False)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(6)
+        # A area inteira abre o seletor de arquivos, entao o cursor
+        # precisa avisar que ela e clicavel - antes so o botao era, e o
+        # texto "ou clique para selecionar" mentia sobre o resto dela.
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self._icon_label = QLabel("📄")
-        self._icon_label.setStyleSheet("font-size: 40px;")
-        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        # O mascote recebe quem chega. Sem imagem, o rotulo some e o
+        # texto sobe - a area continua funcionando igual.
+        self._mascot_label = QLabel()
+        self._mascot_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        sprite = load_mascot_pixmap(MASCOT_HEIGHT)
+        if sprite is None:
+            self._mascot_label.hide()
+        else:
+            self._mascot_label.setPixmap(sprite)
 
         self._main_label = QLabel("Arraste seus arquivos aqui")
-        self._main_label.setObjectName("titleLabel")
-        self._main_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self._main_label.setObjectName("dropTitle")
+        self._main_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         self._hint_label = QLabel("ou clique para selecionar")
         self._hint_label.setObjectName("hintLabel")
-        self._hint_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-
-        self._browse_button = QPushButton("Selecionar arquivos")
-        self._browse_button.clicked.connect(self._open_file_dialog)
+        self._hint_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         layout.addStretch()
-        layout.addWidget(self._icon_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self._mascot_label)
         layout.addWidget(self._main_label)
         layout.addWidget(self._hint_label)
-        layout.addSpacing(8)
-        layout.addWidget(self._browse_button, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addStretch()
 
     # --- Drag and drop -----------------------------------------------
@@ -80,6 +89,11 @@ class FileDropArea(QFrame):
             valid, invalid = validate_paths(paths)
             self.files_dropped.emit(valid, invalid)
         event.acceptProposedAction()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._open_file_dialog()
+        super().mousePressEvent(event)
 
     def _set_drag_active(self, active: bool) -> None:
         self.setProperty("dragActive", "true" if active else "false")

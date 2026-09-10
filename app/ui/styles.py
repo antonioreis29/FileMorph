@@ -7,6 +7,12 @@ não aqui), tipografia arredondada e paleta enxuta — sem gradientes
 nem excesso de cor. As mesmas formas se mantêm nos três temas (item
 27); só a paleta muda.
 
+As cores saem do mascote: são literalmente os tons do sprite em
+`assets/mascot/`, gerado por `tools/gerar_mascote.py`. O rosa pastel do
+corpo é claro demais para carregar texto, então os papéis ficam
+separados — **o pastel é superfície, o ameixa saturado é interação**
+(botões, progresso, foco).
+
 Este módulo expõe apenas texto de QSS (Qt Style Sheets) e as paletas
 de cor associadas — nenhuma lógica de UI mora aqui.
 """
@@ -27,39 +33,50 @@ class Palette:
     accent: str
     accent_hover: str
     accent_pressed: str
+    # Cor do texto sobre um fundo `accent`. Existe porque os dois temas
+    # discordam: no claro o destaque é escuro e pede texto branco; no
+    # escuro ele é um rosa claro, onde texto branco ficaria ilegível.
+    # Antes isto era um "white" fixo no QSS, o que só funcionava por
+    # acidente enquanto as duas paletas tinham destaques escuros.
+    on_accent: str
     success: str
     error: str
     warning: str
 
 
 LIGHT_PALETTE = Palette(
-    background="#F5F3FA",
+    background="#FAF4F9",
     surface="#FFFFFF",
-    surface_alt="#EFEBFA",
-    border="#E1DCF0",
-    text_primary="#2B2640",
-    text_secondary="#79738F",
-    accent="#7C5CFC",
-    accent_hover="#6B49F5",
-    accent_pressed="#5B3AE0",
-    success="#33C481",
-    error="#F0596B",
-    warning="#F5A623",
+    surface_alt="#F6E9F4",
+    border="#EBD6E6",
+    text_primary="#4A3350",  # o mesmo ameixa do contorno do mascote
+    text_secondary="#8B7189",
+    accent="#AC49A0",
+    accent_hover="#983E8E",
+    accent_pressed="#85347C",
+    on_accent="#FFFFFF",  # 4,99:1 sobre o destaque
+    success="#2E9E6B",
+    error="#D6455C",
+    warning="#C97A16",
 )
 
 DARK_PALETTE = Palette(
-    background="#1B1830",
-    surface="#242040",
-    surface_alt="#2E294D",
-    border="#3A335C",
-    text_primary="#F1EEFC",
-    text_secondary="#A9A2C9",
-    accent="#9A7CFF",
-    accent_hover="#AC91FF",
-    accent_pressed="#8567F0",
-    success="#3FD69A",
-    error="#FF6E7F",
-    warning="#FFB84D",
+    background="#241C2B",
+    surface="#2F2438",
+    surface_alt="#3A2D45",
+    border="#493A55",
+    text_primary="#F7EDF5",
+    text_secondary="#B9A5B8",
+    # No escuro o destaque inverte: vira o rosa do corpo do mascote, com
+    # texto ameixa por cima. É o padrão de tema escuro que mantém o
+    # botão legível sem apagar a cor da marca.
+    accent="#E0A6D6",
+    accent_hover="#EDBBE4",
+    accent_pressed="#C98CBF",
+    on_accent="#3A2440",  # 7,08:1 sobre o destaque
+    success="#4FD9A4",
+    error="#FF8090",
+    warning="#FFC163",
 )
 
 
@@ -87,7 +104,12 @@ def build_stylesheet(palette: Palette) -> str:
     }}
 
     QLabel#titleLabel {{
-        font-size: 16px;
+        font-size: 17px;
+        font-weight: 800;
+    }}
+
+    QLabel#dropTitle {{
+        font-size: 14px;
         font-weight: 700;
     }}
 
@@ -117,11 +139,11 @@ def build_stylesheet(palette: Palette) -> str:
 
     QPushButton#primaryButton {{
         background-color: {palette.accent};
-        color: white;
-        border-radius: 18px;
-        padding: 12px 28px;
-        font-size: 14px;
-        font-weight: 700;
+        color: {palette.on_accent};
+        border-radius: 20px;
+        padding: 14px 28px;
+        font-size: 13px;
+        font-weight: 800;
     }}
 
     QPushButton#primaryButton:hover {{
@@ -139,21 +161,30 @@ def build_stylesheet(palette: Palette) -> str:
 
     QPushButton#modeButton {{
         background-color: transparent;
-        border-radius: 12px;
-        padding: 6px 20px;
-        font-weight: 700;
+        border-radius: 14px;
+        padding: 7px 22px;
+        font-weight: 800;
+        font-size: 12px;
         color: {palette.text_secondary};
+    }}
+
+    QPushButton#modeButton:hover:!checked {{
+        color: {palette.text_primary};
     }}
 
     QPushButton#modeButton:checked {{
         background-color: {palette.accent};
-        color: white;
+        color: {palette.on_accent};
     }}
 
     QFrame#dropArea {{
         background-color: {palette.surface};
         border: 2px dashed {palette.border};
-        border-radius: 20px;
+        border-radius: 18px;
+    }}
+
+    QFrame#dropArea:hover {{
+        border-color: {palette.accent};
     }}
 
     QFrame#dropArea[dragActive="true"] {{
@@ -163,8 +194,63 @@ def build_stylesheet(palette: Palette) -> str:
 
     QFrame#fileCard {{
         background-color: {palette.surface};
-        border-radius: 14px;
+        border-radius: 12px;
         border: 1px solid {palette.border};
+    }}
+
+    QLabel#cardIcon {{
+        font-size: 15px;
+    }}
+
+    QLabel#cardName {{
+        font-weight: 600;
+    }}
+
+    QLabel#cardError {{
+        color: {palette.error};
+        font-size: 11px;
+    }}
+
+    /* O status muda de cor conforme o estado. A propriedade dinamica
+       'status' e trocada em file_list.py; as cores ficam aqui, junto
+       do resto da paleta, em vez de espalhadas pelo codigo da UI. */
+    QLabel#cardStatus {{
+        font-size: 11px;
+        font-weight: 700;
+    }}
+
+    QLabel#cardStatus[status="waiting"] {{
+        color: {palette.text_secondary};
+    }}
+
+    QLabel#cardStatus[status="processing"] {{
+        color: {palette.accent};
+    }}
+
+    QLabel#cardStatus[status="done"] {{
+        color: {palette.success};
+    }}
+
+    QLabel#cardStatus[status="error"] {{
+        color: {palette.error};
+    }}
+
+    QLabel#cardStatus[status="cancelled"] {{
+        color: {palette.warning};
+    }}
+
+    QPushButton#cardRemove {{
+        background-color: transparent;
+        color: {palette.text_secondary};
+        border-radius: 12px;
+        padding: 0px;
+        font-size: 16px;
+        font-weight: 700;
+    }}
+
+    QPushButton#cardRemove:hover {{
+        background-color: {palette.surface_alt};
+        color: {palette.error};
     }}
 
     QFrame#topBar {{
@@ -191,14 +277,20 @@ def build_stylesheet(palette: Palette) -> str:
 
     QProgressBar {{
         background-color: {palette.surface_alt};
-        border-radius: 10px;
-        text-align: center;
-        height: 16px;
+        border: none;
+        border-radius: 5px;
+        max-height: 10px;
+        min-height: 10px;
     }}
 
     QProgressBar::chunk {{
         background-color: {palette.accent};
-        border-radius: 10px;
+        border-radius: 5px;
+    }}
+
+    QPushButton#cancelButton {{
+        padding: 6px 16px;
+        font-size: 12px;
     }}
 
     QScrollBar:vertical {{

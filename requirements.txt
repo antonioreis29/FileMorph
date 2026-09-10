@@ -1,10 +1,12 @@
 # FileMorph — dependências
 #
 # As dependências estão organizadas por fase de implementação.
-# Na entrega atual (Fases 1 a 4), os blocos "Interface", "Imagens" e
-# "PDF" são os que o aplicativo realmente usa. As demais bibliotecas já
-# estão listadas para que os conversores futuros (Fases 5+) não exijam
-# reinstalação de ambiente.
+# Na entrega atual (Fases 1 a 6), os blocos "Interface", "Imagens" e
+# "PDF" são os que o aplicativo realmente usa — áudio e vídeo não
+# entram aqui porque dependem do FFmpeg, que não é um pacote pip (veja
+# a observação no fim do arquivo). As demais bibliotecas já estão
+# listadas para que os conversores futuros não exijam reinstalação de
+# ambiente.
 
 # --- Interface (Fase 1-2) ---
 PySide6>=6.6.0
@@ -32,8 +34,10 @@ pyinstaller>=6.3.0
 pytest>=8.0.0
 
 # Observações:
-# - Áudio/Vídeo (Fase 6) dependem do FFmpeg, que é um binário externo
-#   detectado em tempo de execução por app/utils/ffmpeg_manager.py —
-#   não é um pacote pip.
+# - Áudio/Vídeo (Fase 6) dependem do FFmpeg, um binário externo
+#   detectado e executado por app/utils/ffmpeg_manager.py — não é um
+#   pacote pip. Baixe em ffmpeg.org e adicione a pasta 'bin' ao PATH do
+#   Windows. Sem ele o aplicativo abre normalmente: apenas as conversões
+#   de áudio e vídeo deixam de aparecer no seletor de formato.
 # - Documentos complexos (Fase 7) podem depender de LibreOffice em modo
 #   headless, também um binário externo, não um pacote pip.

@@ -97,7 +97,7 @@ def ensure_directory(path: str | Path) -> Path:
 TEMP_WRITE_SUFFIX = ".filemorph-tmp"
 
 
-def temp_output_path(destination: str | Path) -> Path:
+def temp_output_path(destination: str | Path, keep_extension: bool = False) -> Path:
     """Caminho temporário ao lado do destino final, para gravação atômica.
 
     Os conversores escrevem primeiro nesse arquivo e só então o movem
@@ -105,8 +105,15 @@ def temp_output_path(destination: str | Path) -> Path:
     deixa arquivo truncado nem destrói um arquivo bom que já ocupasse o
     nome de destino. O trecho aleatório evita que duas conversões do
     mesmo lote, rodando em paralelo, disputem o mesmo temporário.
+
+    `keep_extension` mantém a extensão do destino no fim do nome
+    temporário. Pillow e pypdf recebem o formato como parâmetro e não
+    se importam com o nome do arquivo, mas o FFmpeg (Fase 6) descobre o
+    formato de saída *pela extensão* — um temporário terminado em
+    '.filemorph-tmp' o faria recusar a conversão antes de começar.
     """
     destination = Path(destination)
-    return destination.with_name(
-        f".{destination.name}.{uuid4().hex[:8]}{TEMP_WRITE_SUFFIX}"
-    )
+    marker = f".{destination.name}.{uuid4().hex[:8]}{TEMP_WRITE_SUFFIX}"
+    if keep_extension:
+        marker += destination.suffix
+    return destination.with_name(marker)

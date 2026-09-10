@@ -8,9 +8,10 @@ compacto, único, sem múltiplas janelas para o fluxo básico.
 Esta janela NUNCA fala diretamente com Pillow/pypdf/FFmpeg. Ela passa
 tudo por `FileProcessor` (app/core/processor.py), que por sua vez só
 executa o que a camada de compatibilidade confirma como implementado.
-Para as combinações ainda sem conversor (áudio, vídeo, documentos), o
-botão principal continua desabilitado com uma mensagem honesta, em vez
-de simular um processamento que não existe (item 37).
+Para as combinações ainda sem conversor (documentos, planilhas) — e
+para áudio e vídeo em uma máquina sem FFmpeg —, o botão principal
+continua desabilitado com uma mensagem honesta, em vez de simular um
+processamento que não existe (item 37).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config.settings import settings_manager
+from app.core.converter import compatibility_registry
 from app.core.processor import BatchRequest, FileProcessor
 from app.core.task_queue import TaskQueue
 from app.ui.file_drop_area import FileDropArea
@@ -49,6 +51,7 @@ from app.utils.file_utils import (
     resolve_output_path,
 )
 from app.utils.logger import get_logger, get_logs_dir
+from app.utils.resources import ICON_PATH, get_asset
 
 logger = get_logger("ui.main_window")
 
@@ -69,6 +72,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("FileMorph")
         self.setMinimumSize(480, 640)
+
+        # O mesmo ícone que o atalho do Windows usa, agora na barra de
+        # tarefas e no canto da janela. Ausente, o Qt cai no ícone padrão.
+        icone = get_asset(*ICON_PATH)
+        if icone is not None:
+            self.setWindowIcon(QIcon(str(icone)))
 
         self._task_queue = TaskQueue(max_concurrent=settings_manager.settings.max_concurrent_tasks)
         self._processor = FileProcessor(self._task_queue)
@@ -149,7 +158,10 @@ class MainWindow(QMainWindow):
         self._drop_area.files_dropped.connect(self._on_files_dropped)
         root.addWidget(self._drop_area)
 
-        # Mensagem do mascote
+        # A fala do mascote. A figura dele mora dentro da area de
+        # arrastar (ver app/ui/file_drop_area.py), que e onde ela recebe
+        # quem chega - repeti-la aqui seria mostrar o mesmo desenho duas
+        # vezes na mesma tela.
         self._mascot_label = QLabel(_MASCOT_MESSAGES["idle"])
         self._mascot_label.setObjectName("mascotLabel")
         self._mascot_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
@@ -553,18 +565,64 @@ class MainWindow(QMainWindow):
             logger.info("FFmpeg não encontrado — conversões de áudio/vídeo ficarão indisponíveis.")
 
     def _check_dependencies_dialog(self) -> None:
+        """Relata o estado real do FFmpeg — inclusive quando ele existe mas
+        o aplicativo ainda não o está usando.
+
+        Os conversores são registrados uma única vez, na inicialização
+        (ver `main.py`). Se o usuário instalar o FFmpeg com o FileMorph
+        aberto, esta janela vai encontrá-lo, mas o seletor de formato só
+        vai oferecer áudio e vídeo depois de reiniciar — e é isso que a
+        mensagem precisa dizer, em vez de deixar o usuário achando que
+        está tudo pronto.
+        """
         status = ffmpeg_manager.status(force_refresh=True)
-        if status.available:
-            version = status.version or "desconhecida"
-            message = f"✓ FFmpeg encontrado (versão {version}).\n\nConversões de áudio e vídeo poderão usá-lo quando implementadas."
-        else:
-            message = (
+
+        if not status.available:
+            QMessageBox.information(
+                self,
+                "Dependências",
                 "FFmpeg não encontrado no sistema.\n\n"
-                "Para converter áudio e vídeo, o FileMorph vai precisar do FFmpeg "
-                "instalado e disponível no PATH do Windows. Baixe em ffmpeg.org "
-                "e adicione a pasta 'bin' às variáveis de ambiente."
+                "Sem ele, o FileMorph converte imagens e PDF normalmente, mas "
+                "áudio e vídeo não aparecem no seletor de formato.\n\n"
+                "Para habilitá-los, baixe o FFmpeg em ffmpeg.org, descompacte "
+                "e adicione a pasta 'bin' ao PATH do Windows.",
             )
+            return
+
+        version = status.version or "desconhecida"
+        audio_targets = compatibility_registry.available_targets_for("mp3")
+        video_targets = compatibility_registry.available_targets_for("mp4")
+
+        if not audio_targets and not video_targets:
+            message = (
+                f"✓ FFmpeg encontrado (versão {version}), mas ele ainda não está "
+                "em uso nesta sessão.\n\n"
+                "Feche e abra o FileMorph para habilitar as conversões de áudio "
+                "e vídeo."
+            )
+        else:
+            message = f"✓ FFmpeg encontrado (versão {version}).\n\n"
+            if audio_targets:
+                message += (
+                    "De um arquivo de áudio você pode gerar: "
+                    f"{self._format_list(audio_targets)}.\n"
+                )
+            if video_targets:
+                message += (
+                    "De um vídeo você pode gerar: "
+                    f"{self._format_list(video_targets)}.\n"
+                )
+            message += (
+                "\nOs formatos oferecidos dependem dos codificadores desta "
+                "instalação do FFmpeg — o que não aparece aqui é o que esta "
+                "compilação não sabe gravar."
+            )
+
         QMessageBox.information(self, "Dependências", message)
+
+    @staticmethod
+    def _format_list(extensions: set[str]) -> str:
+        return ", ".join(ext.upper() for ext in sorted(extensions))
 
     # --- Menu ---------------------------------------------------------------
 
@@ -584,14 +642,20 @@ class MainWindow(QMainWindow):
             "Arraste seus arquivos para a área central, escolha o formato de "
             "destino (ou o modo Juntar) e clique no botão principal.\n\n"
             "Esta versão converte imagens entre PNG, JPG e WEBP, transforma "
-            "imagens em PDF e PDF em imagens. Os arquivos convertidos são "
-            "salvos na pasta definida em Configurações, e o original nunca é "
-            "alterado.\n\n"
+            "imagens em PDF e PDF em imagens, converte áudio entre MP3, WAV, "
+            "FLAC, OGG e M4A, converte vídeo entre MP4, MKV e WEBM e extrai a "
+            "trilha sonora de um vídeo como arquivo de áudio. Os arquivos "
+            "convertidos são salvos na pasta definida em Configurações, e o "
+            "original nunca é alterado.\n\n"
             "No modo Juntar, vários PDFs e imagens viram um único PDF, na "
             "ordem em que aparecem na lista.\n\n"
-            "Conversões de áudio, vídeo e documentos chegam nas próximas "
-            "atualizações — enquanto não existirem, elas não aparecem no "
-            "seletor de formato.",
+            "Áudio e vídeo dependem do FFmpeg instalado no sistema: use "
+            "'Verificar dependências' no menu para ver o que está habilitado "
+            "nesta máquina. Converter vídeo é demorado — leva na ordem da "
+            "duração do próprio vídeo —, e o botão Cancelar interrompe a "
+            "conversão em andamento a qualquer momento.\n\n"
+            "Conversões de documentos chegam nas próximas atualizações — "
+            "enquanto não existirem, elas não aparecem no seletor de formato.",
         )
 
     def _show_about(self) -> None:
@@ -599,6 +663,7 @@ class MainWindow(QMainWindow):
             self,
             "Sobre o FileMorph",
             "FileMorph — converta, transforme e junte arquivos localmente.\n\n"
-            "Versão em desenvolvimento (Fase 4: imagens PNG/JPG/WEBP, "
-            "PDF e junção em PDF).",
+            "Versão em desenvolvimento (Fase 6: imagens PNG/JPG/WEBP, PDF, "
+            "junção em PDF, áudio MP3/WAV/FLAC/OGG/M4A e vídeo MP4/MKV/WEBM "
+            "via FFmpeg).",
         )
