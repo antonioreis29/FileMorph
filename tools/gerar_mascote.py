@@ -32,7 +32,7 @@ publicamente, o mascote deve ser trocado por arte própria.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image

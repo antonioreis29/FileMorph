@@ -262,6 +262,13 @@ primeira execução caso o PySide6 ou o Pillow ainda não estejam
 disponíveis e abre a janela. Se algo der errado, a janela do console fica aberta explicando o
 motivo em vez de sumir.
 
+Se preferir sem nenhuma janela de console à vista, use o
+`FileMorph (sem console).vbs`, ao lado dele. Ele chama o mesmo
+`FileMorph.bat` com a janela escondida — a lógica de encontrar o Python
+e instalar dependências continua num lugar só. A diferença é que um
+erro aparece numa caixa de mensagem do Windows em vez de num console
+que ninguém viu abrir.
+
 ## Arquitetura
 
 ```
@@ -287,7 +294,8 @@ FileMorph/
 │   ├── utils/                # logging, arquivos temporários, ffmpeg,
 │   │                          utilitários de arquivo
 │   └── config/               # configurações persistidas do usuário
-└── assets/                  # ícones, mascote, fontes
+└── assets/                  # ícone do app, mascote e os ícones de
+                             # tipo de arquivo
     └── icons/filetypes/     # o ícone que cada arquivo mostra na lista,
                                um arquivo por extensão. Um `<ext>.png`
                                colocado aqui substitui o `<ext>.svg`

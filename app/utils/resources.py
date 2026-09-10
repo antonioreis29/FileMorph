@@ -1,5 +1,5 @@
 """
-Localização dos arquivos de recurso do FileMorph (ícone, mascote, fontes).
+Localização dos arquivos de recurso do FileMorph (ícone e mascote).
 
 Em desenvolvimento os recursos ficam em `assets/`, ao lado do `main.py`.
 Empacotado com PyInstaller (fase futura), eles passam a viver dentro da

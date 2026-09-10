@@ -63,6 +63,49 @@ function Get-Versao {
     throw "Nao consegui ler __version__ de '$arquivo'."
 }
 
+function Invoke-Externo {
+    <#
+        Executa um programa e devolve só o código de saída.
+
+        Existe para que a dança do $ErrorActionPreference apareça uma
+        vez só. Ela é necessária porque o PowerShell 5.1 transforma
+        cada linha que um executável nativo escreve em stderr num
+        ErrorRecord — com 'Stop' valendo, o pip escrevendo um aviso
+        inofensivo abortaria o empacotamento inteiro. É a mesma razão
+        pela qual o install.ps1 tem o seu Invoke-Capture.
+
+        `Silencioso` descarta a saída, para as sondagens; sem ele a
+        saída aparece na tela, que é o que se quer numa operação
+        demorada como o PyInstaller.
+
+        **O `Out-Host` não é decoração.** Numa função do PowerShell,
+        tudo que vai para a saída padrão compõe o valor de retorno — sem
+        ele, quem chamasse esta função receberia as centenas de linhas
+        que o PyInstaller imprime *mais* o código de saída, num array,
+        e a comparação `-ne 0` daria verdadeira mesmo num build que
+        funcionou. O `Out-Host` escreve direto no console e não passa
+        pelo pipeline, deixando só o código como retorno.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Programa,
+        [string[]]$Argumentos = @(),
+        [switch]$Silencioso
+    )
+
+    $anterior = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if ($Silencioso) {
+            & $Programa @Argumentos 2>$null | Out-Null
+        } else {
+            & $Programa @Argumentos | Out-Host
+        }
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $anterior
+    }
+}
+
 function Find-Python {
     <#
         Procura um Python que tenha o PyInstaller.
@@ -72,33 +115,26 @@ function Find-Python {
         instalação do FileMorph em %LOCALAPPDATA% vem logo depois: ela
         também tem um .venv completo, montado pelo install.ps1, e numa
         máquina de desenvolvimento costuma existir mesmo quando o
-        projeto ainda não criou o seu.
+        projeto ainda não criou o seu. O Python do PATH vem por último,
+        porque é o menos previsível dos três.
     #>
     $candidatos = @(
         (Join-Path $Raiz '.venv\Scripts\python.exe'),
         (Join-Path $env:LOCALAPPDATA 'Programs\FileMorph\.venv\Scripts\python.exe')
     )
 
-    foreach ($caminho in $candidatos) {
-        if (Test-Path -LiteralPath $caminho) {
-            $anterior = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            & $caminho -c 'import PyInstaller' 2>$null
-            $codigo = $LASTEXITCODE
-            $ErrorActionPreference = $anterior
-            if ($codigo -eq 0) { return $caminho }
-        }
-    }
-
-    # Último recurso: o Python do PATH.
     $doPath = Get-Command python -ErrorAction SilentlyContinue
     if ($doPath) {
-        $anterior = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        & $doPath.Source -c 'import PyInstaller' 2>$null
-        $codigo = $LASTEXITCODE
-        $ErrorActionPreference = $anterior
-        if ($codigo -eq 0) { return $doPath.Source }
+        $candidatos += $doPath.Source
+    }
+
+    foreach ($caminho in $candidatos) {
+        if (-not (Test-Path -LiteralPath $caminho)) {
+            continue
+        }
+        if ((Invoke-Externo -Programa $caminho -Argumentos @('-c', 'import PyInstaller') -Silencioso) -eq 0) {
+            return $caminho
+        }
     }
 
     return $null
@@ -163,11 +199,7 @@ O PyInstaller ja esta listado no requirements.txt.
     }
 
     Write-Info 'Isso costuma levar de um a tres minutos.'
-    $anterior = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & $python @argumentos
-    $codigo = $LASTEXITCODE
-    $ErrorActionPreference = $anterior
+    $codigo = Invoke-Externo -Programa $python -Argumentos $argumentos
 
     if ($codigo -ne 0) {
         throw "O PyInstaller falhou (codigo $codigo)."
@@ -205,11 +237,10 @@ O PyInstaller ja esta listado no requirements.txt.
         } else {
             Write-Info "ISCC: $iscc"
 
-            $anterior = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            & $iscc "/DMyAppVersion=$versao" (Join-Path $Raiz 'installer\FileMorph.iss')
-            $codigo = $LASTEXITCODE
-            $ErrorActionPreference = $anterior
+            $codigo = Invoke-Externo -Programa $iscc -Argumentos @(
+                "/DMyAppVersion=$versao",
+                (Join-Path $Raiz 'installer\FileMorph.iss')
+            )
 
             if ($codigo -ne 0) {
                 throw "O Inno Setup falhou (codigo $codigo)."
