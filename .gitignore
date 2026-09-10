@@ -6,6 +6,9 @@ __pycache__/
 build/
 dist/
 *.spec
+# ...menos a receita de empacotamento do projeto, que e versionada de
+# proposito: ela e a configuracao do instalador, nao um arquivo gerado.
+!FileMorph.spec
 
 # Ambientes virtuais
 .venv/
