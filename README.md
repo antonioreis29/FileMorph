@@ -152,6 +152,44 @@ imagem. O WEBM é o mais demorado dos três.
   `bin` ao PATH do Windows. Sem ele o FileMorph funciona normalmente
   para imagens e PDF.
 
+## Instalação (para usar o aplicativo)
+
+**Dê um duplo clique em `Instalar FileMorph.bat`**, na raiz do projeto.
+
+O instalador de verdade é o `install.ps1` ao lado dele; o `.bat` existe
+porque o Windows **não executa um `.ps1` com duplo clique**. Por
+segurança, a extensão `.ps1` vem associada ao Bloco de Notas, então
+clicar no `install.ps1` apenas abre o código como texto — o que costuma
+parecer um defeito e não é. O `.bat` chama o PowerShell explicitamente e
+manda ele rodar o script.
+
+Se preferir o terminal, o efeito é o mesmo:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+O `-ExecutionPolicy Bypass` vale só para aquela execução e não altera a
+política da máquina. Sem ele, a política padrão do Windows recusa o
+script mesmo sendo um arquivo local.
+
+A instalação copia o projeto para `%LOCALAPPDATA%\Programs\FileMorph`,
+cria um ambiente virtual com as dependências e coloca atalhos no Menu
+Iniciar e na Área de Trabalho.
+
+O ícone dos atalhos é `assets/icons/filemorph.ico`. Para trocá-lo por
+outra imagem:
+
+```bash
+python tools/gerar_icone_de_imagem.py caminho/da/imagem.png
+```
+
+A ferramenta remove o fundo, centra o desenho num quadrado e grava o
+`.ico` com as sete resoluções que o Windows usa (de 16 a 256 px) — um
+`.ico` de tamanho único ficaria borrado na barra de tarefas. Depois é
+só reinstalar: o `install.ps1` lê o arquivo no momento em que cria o
+atalho.
+
 ## Instalação (ambiente de desenvolvimento)
 
 ```bash
@@ -182,6 +220,9 @@ FileMorph/
 ├── main.py                  # ponto de entrada
 ├── tools/                   # utilitários de desenvolvimento, fora do app
 │   ├── gerar_mascote.py     # desenha o mascote e o ícone (pixel art)
+│   ├── gerar_icones_tipos.py # gera os ícones de tipo de arquivo (SVG)
+│   ├── gerar_icone_de_imagem.py # vira o .ico do atalho a partir de
+│   │                          uma imagem qualquer
 │   └── preparar_mascote.py  # limpa o fundo de uma imagem trazida de fora
 ├── app/
 │   ├── core/                # lógica central: conversão, junção, fila,
@@ -198,6 +239,11 @@ FileMorph/
 │   │                          utilitários de arquivo
 │   └── config/               # configurações persistidas do usuário
 └── assets/                  # ícones, mascote, fontes
+    └── icons/filetypes/     # o ícone que cada arquivo mostra na lista,
+                               um arquivo por extensão. Um `<ext>.png`
+                               colocado aqui substitui o `<ext>.svg`
+                               gerado, sem apagar nada nem mexer no
+                               código.
 ```
 
 A UI nunca conversa diretamente com Pillow/pypdf/FFmpeg etc. Ela passa

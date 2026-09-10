@@ -25,17 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.file_validator import get_file_category
+from app.ui.file_icons import ICON_SIZE, fallback_emoji, icon_pixmap
 from app.utils.file_utils import get_extension, get_file_size_display, get_filename
-
-_CATEGORY_ICONS = {
-    "imagem": "🖼",
-    "pdf": "📕",
-    "documento": "📄",
-    "audio": "🎵",
-    "video": "🎬",
-    "planilha": "📊",
-}
 
 _STATUS_LABELS = {
     "waiting": "aguardando",
@@ -81,10 +72,19 @@ class FileCard(QFrame):
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        category = get_file_category(entry.path)
-        icon = _CATEGORY_ICONS.get(category or "", "📁")
-        self._icon_label = QLabel(icon)
+        # O ícone gráfico é o caminho normal; o emoji só entra se a
+        # arte não estiver instalada (veja app/ui/file_icons.py).
+        self._icon_label = QLabel()
         self._icon_label.setObjectName("cardIcon")
+        pixmap = icon_pixmap(entry.path)
+        if pixmap is not None:
+            self._icon_label.setPixmap(pixmap)
+            # Sem setScaledContents: o pixmap ja vem no tamanho certo,
+            # e estica-lo achataria a folha.
+            self._icon_label.setFixedHeight(ICON_SIZE)
+        else:
+            self._icon_label.setText(fallback_emoji(entry.path))
+        self._icon_label.setAccessibleName(f"Arquivo {get_extension(entry.path).upper()}")
 
         self._name_label = QLabel(get_filename(entry.path))
         self._name_label.setObjectName("cardName")

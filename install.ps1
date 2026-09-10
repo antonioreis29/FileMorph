@@ -14,6 +14,8 @@
       5. Verifica o FFmpeg (opcional — só avisa se faltar).
       6. Gera um atalho de inicialização que abre o app sem console.
       7. Cria os atalhos no Menu Iniciar e, opcionalmente, na Área de Trabalho.
+      8. Registra o aplicativo em Configurações > Aplicativos, com botão
+         de desinstalar.
 
     O script NUNCA toca nas pastas de dados do usuário — configurações em
     %APPDATA%\FileMorph, logs, e a pasta de arquivos convertidos em
@@ -77,7 +79,7 @@ function Write-Step {
     param([string]$Message)
     $script:CurrentStep++
     Write-Host ''
-    Write-Host "[$script:CurrentStep/7] $Message" -ForegroundColor Cyan
+    Write-Host "[$script:CurrentStep/8] $Message" -ForegroundColor Cyan
 }
 
 function Write-Detail {
@@ -206,6 +208,34 @@ function Find-PythonCommand {
 
     return $null
 }
+
+function Get-AppVersion {
+    <#
+        Le a versao de app/version.py.
+
+        Por expressao regular, e nao importando o modulo: neste ponto o
+        ambiente virtual pode nem existir ainda, e chamar o Python so
+        para ler uma constante seria um custo desnecessario. O formato
+        da linha esta documentado no proprio version.py justamente para
+        que esta leitura continue valendo.
+    #>
+    param([Parameter(Mandatory)][string]$ProjectPath)
+
+    $arquivo = Join-Path $ProjectPath 'app\version.py'
+    if (-not (Test-Path -LiteralPath $arquivo)) {
+        return '0.0.0'
+    }
+
+    $conteudo = Get-Content -LiteralPath $arquivo -Raw
+    if ($conteudo -match '__version__\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+        return $Matches[1]
+    }
+
+    # Uma versao invalida faria o Windows recusar a entrada inteira, o
+    # que e pior do que mostrar uma versao generica.
+    return '0.0.0'
+}
+
 
 function New-Shortcut {
     param(
@@ -497,9 +527,10 @@ shell.Run quote & interpreter & quote & " " & quote & entryPoint & quote, 0, Fal
     # --- 7) Atalhos -------------------------------------------------
     Write-Step 'Criando os atalhos'
 
-    # Sem icone proprio ainda (assets/icons esta vazio no projeto), entao
-    # o atalho herda o icone do interpretador. Se um .ico for adicionado
-    # ao projeto no futuro, ele passa a ser usado automaticamente.
+    # O atalho usa assets\icons\filemorph.ico quando ele existe. Se o
+    # arquivo nao estiver la, o atalho herda o icone do interpretador -
+    # feio, mas inofensivo. Basta colocar um .ico nesse caminho e
+    # reinstalar para o atalho passar a usa-lo.
     $iconPath = Join-Path $InstallPath 'assets\icons\filemorph.ico'
     if (Test-Path -LiteralPath $iconPath) {
         $iconLocation = $iconPath
@@ -536,6 +567,76 @@ shell.Run quote & interpreter & quote & " " & quote & entryPoint & quote, 0, Fal
     }
 
 
+    # --- 8) Registro no Painel de Controle --------------------------
+    Write-Step 'Registrando em Configuracoes > Aplicativos'
+
+    # Aquela lista nao e uma varredura do disco: o Windows a monta lendo
+    # esta chave do registro. Sem escreve-la, o aplicativo existe em
+    # disco mas nao aparece em lugar nenhum e nao tem botao
+    # "Desinstalar" — que era exatamente o comportamento anterior.
+    #
+    # HKCU, e nao HKLM, porque esta e uma instalacao por usuario:
+    # escrever em HKLM exigiria elevacao de privilegio, que este
+    # instalador faz questao de nao pedir.
+    $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\FileMorph'
+    $appVersion = Get-AppVersion -ProjectPath $InstallPath
+
+    # O desinstalador acompanha o projeto e foi copiado junto no passo 3.
+    $uninstaller = Join-Path $InstallPath 'desinstalar.ps1'
+    if (-not (Test-Path -LiteralPath $uninstaller)) {
+        Write-Warn 'desinstalar.ps1 nao veio no projeto - a entrada ficara sem botao Desinstalar.'
+    }
+
+    # EstimatedSize e informativa e vai em KB, que e a unidade que o
+    # Painel de Controle espera. Falhar em calcular nao e motivo para
+    # abortar: a coluna apenas fica vazia.
+    $tamanhoKb = 0
+    try {
+        $bytes = (Get-ChildItem -LiteralPath $InstallPath -Recurse -File -ErrorAction SilentlyContinue |
+                  Measure-Object -Property Length -Sum).Sum
+        if ($bytes) { $tamanhoKb = [int]($bytes / 1KB) }
+    } catch {
+        Write-Detail 'Nao foi possivel calcular o tamanho da instalacao - seguindo sem ele.'
+    }
+
+    if (-not (Test-Path -LiteralPath $uninstallKey)) {
+        New-Item -Path $uninstallKey -Force | Out-Null
+    }
+
+    # As aspas em volta do caminho do script sao obrigatorias: sem elas,
+    # um caminho com espaco (e "Program Files" ou um nome de usuario
+    # composto sao comuns) faria o PowerShell tratar cada palavra como
+    # um argumento diferente.
+    $comandoBase = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$uninstaller`""
+
+    $valores = @{
+        DisplayName          = 'FileMorph'
+        DisplayVersion       = $appVersion
+        Publisher            = 'Antonio Reis'
+        DisplayIcon          = $iconPath
+        InstallLocation      = $InstallPath
+        UninstallString      = $comandoBase
+        QuietUninstallString = "$comandoBase -Silencioso"
+        URLInfoAbout         = 'https://github.com/antonioreis29/FileMorph'
+        # Sem instalador que saiba consertar ou alterar a instalacao, os
+        # botoes correspondentes devem sumir em vez de falhar.
+        NoModify             = 1
+        NoRepair             = 1
+    }
+
+    foreach ($nome in $valores.Keys) {
+        $valor = $valores[$nome]
+        $tipo = if ($valor -is [int]) { 'DWord' } else { 'String' }
+        New-ItemProperty -Path $uninstallKey -Name $nome -Value $valor -PropertyType $tipo -Force | Out-Null
+    }
+
+    if ($tamanhoKb -gt 0) {
+        New-ItemProperty -Path $uninstallKey -Name 'EstimatedSize' -Value $tamanhoKb -PropertyType DWord -Force | Out-Null
+    }
+
+    Write-Ok "FileMorph $appVersion aparece agora em Configuracoes > Aplicativos."
+
+
     # --- Fim ---------------------------------------------------------
     Write-Host ''
     Write-Host '  ----------------------------------------------------' -ForegroundColor DarkGray
@@ -549,7 +650,8 @@ shell.Run quote & interpreter & quote & " " & quote & entryPoint & quote, 0, Fal
     Write-Host "      $env:APPDATA\FileMorph" -ForegroundColor DarkGray
     Write-Host "      $([Environment]::GetFolderPath('MyDocuments'))\FileMorph\Convertidos" -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Para desinstalar: apague a pasta da instalacao e os atalhos.' -ForegroundColor DarkGray
+    Write-Host '  Para desinstalar:     Configuracoes > Aplicativos > FileMorph' -ForegroundColor DarkGray
+    Write-Host "                        ou rode $InstallPath\desinstalar.ps1" -ForegroundColor DarkGray
     Write-Host '  ----------------------------------------------------' -ForegroundColor DarkGray
     Write-Host ''
 
