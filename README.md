@@ -30,11 +30,16 @@ quando existe de verdade no aplicativo:
 - ✅ **FASE 8 — mascote animado**: o mascote reage ao que está
   acontecendo (esperando, trabalhando, comemorando, errando), e as duas
   opções de mascote das configurações passaram a funcionar de verdade.
-- ⏳ **FASE 9 em diante** (planilhas) ainda **não foi implementada**.
+- ✅ **FASE 9 — planilhas**: XLSX e CSV nos dois sentidos e, com o
+  LibreOffice instalado, XLSX em PDF. Planilhas também entram no modo
+  "Juntar".
+
+Com isso, **todas as fases do roteiro original estão entregues**. O que
+vier daqui para frente é ampliação (ver "Próximos passos" no fim).
 
 O princípio de projeto continua valendo: a interface só oferece
 operações que existem de fato — não há botões ou opções "decorativas"
-simulando funcionalidades inexistentes. Se você adicionar um XLSX, o
+simulando funcionalidades inexistentes. Se você adicionar um BMP, o
 seletor de formato fica vazio e o botão principal desabilitado, porque
 ainda não existe conversor registrado para esse formato. O mesmo vale
 para um MP4 em uma máquina sem FFmpeg instalado, ou para a opção "PDF"
@@ -256,25 +261,74 @@ que também é o que se deve a quem prefere uma interface sem movimento. O
 temporizador também para sozinho quando a janela é escondida: não faz
 sentido desenhar quadros que ninguém vê.
 
+### O que a Fase 9 acrescentou
+
+Planilhas: **XLSX e CSV** nos dois sentidos (openpyxl) e **XLSX → PDF**
+pelo LibreOffice, o mesmo caminho que o DOCX já usava.
+
+Planilha é onde dado se corrompe em silêncio, e as três decisões abaixo
+são todas sobre isso.
+
+**A planilha de várias abas vira uma pasta de CSVs.** Um CSV guarda uma
+tabela; uma pasta de trabalho guarda quantas quiser. Converter só a aba
+ativa e calar sobre as outras perderia dados sem avisar. Uma aba só vira
+exatamente o arquivo pedido; várias viram uma subpasta com um CSV por
+aba (`ano/ano_01_Janeiro.csv`, `ano_02_Fevereiro.csv`, ...) — a mesma
+regra que o PDF de várias páginas usa desde a Fase 4. **Abas ocultas
+entram também**: é onde costuma morar a tabela de apoio das fórmulas.
+
+**O CSV é escrito no dialeto que o Excel desta máquina escreve** — ponto
+e vírgula como separador, vírgula como decimal, UTF-8 com BOM. Parece
+arbitrário e é o oposto: o Excel em português escreve e espera assim, e
+é nele que o arquivo vai ser aberto. Um CSV separado por vírgula, que é
+o dialeto internacional, abre no Excel brasileiro com tudo empilhado na
+coluna A — o usuário veria um arquivo quebrado e culparia o FileMorph,
+com razão. Sem o BOM, o Excel ignora a codificação e come os acentos. A
+direção contrária **aceita os dois dialetos** (o separador é descoberto
+contando colunas), então um CSV baixado da internet converte igual.
+
+**Vindo do CSV, só vira número o que não pode ser confundido:**
+
+| No arquivo | Na planilha | Por quê |
+|---|---|---|
+| `42`, `-3`, `1,5`, `2.75` | número | inequívoco, e é o que permite somar |
+| `007`, `01310-100` | texto | virar número comeria o zero da frente — é o defeito clássico que estraga CEP, código de produto e telefone |
+| `03/04/2024` | texto | 3 de abril ou 4 de março? Chutar erra metade das vezes, e a planilha esconderia o chute atrás de uma data formatada |
+| `1.234` | texto | mil duzentos e trinta e quatro, ou um e pouco? Depende do país de quem gravou |
+| `=SOMA(A1:A9)` | texto | uma planilha que executa o que vinha escrito num arquivo de texto é porta de entrada conhecida para conteúdo malicioso, além de não ser o que o arquivo dizia |
+
+Na volta, o caminho é o mesmo: datas saem em formato ISO
+(`2024-03-04`), que é o único não ambíguo e que o Excel reconhece em
+qualquer idioma, e um inteiro guardado como decimal (o Excel faz isso
+com frequência) sai sem o `.0` pendurado, que não estava na planilha.
+
+**Fórmula vira o último valor calculado.** Nenhuma biblioteca de leitura
+calcula fórmula — o que existe no arquivo é o resultado que o Excel
+gravou da última vez. Uma planilha gerada por um programa que nunca
+calculou nada pode não ter esses valores guardados, e aí a célula sai
+vazia. É uma propriedade do arquivo, não da conversão.
+
 ## Requisitos
 
 - Windows 10/11 (desenvolvido e pensado para Windows, mas roda em
   qualquer SO com Python + PySide6 para fins de desenvolvimento).
 - Python 3.12+
 - PySide6 (interface), Pillow (imagens), pypdf (junção), PyMuPDF
-  (leitura de PDF e geração de PDF a partir de texto) e python-docx
-  (documentos do Word) — todos instalados pelo `requirements.txt`. Cada
-  um é verificado separadamente na inicialização: faltando um deles, o
-  aplicativo abre normalmente e apenas as operações que dependiam
-  daquela biblioteca deixam de ser oferecidas, com o motivo no log.
+  (leitura de PDF e geração de PDF a partir de texto), python-docx
+  (documentos do Word) e openpyxl (planilhas) — todos instalados pelo
+  `requirements.txt`. Cada um é verificado separadamente na
+  inicialização: faltando um deles, o aplicativo abre normalmente e
+  apenas as operações que dependiam daquela biblioteca deixam de ser
+  oferecidas, com o motivo no log.
 - **FFmpeg** (opcional, para áudio e vídeo): não é um pacote pip. Baixe
   em [ffmpeg.org](https://ffmpeg.org), descompacte e adicione a pasta
   `bin` ao PATH do Windows. Sem ele o FileMorph funciona normalmente
   para imagens, PDF e documentos.
-- **LibreOffice** (opcional, só para converter DOCX em PDF): também não
-  é um pacote pip. Instale de [libreoffice.org](https://libreoffice.org)
-  — o FileMorph o encontra sozinho, sem precisar mexer no PATH. Sem ele
-  as outras conversões de documento continuam disponíveis.
+- **LibreOffice** (opcional, só para converter DOCX e XLSX em PDF):
+  também não é um pacote pip. Instale de
+  [libreoffice.org](https://libreoffice.org) — o FileMorph o encontra
+  sozinho, sem precisar mexer no PATH. Sem ele as outras conversões de
+  documento e de planilha continuam disponíveis.
 
 O menu **"Verificar dependências"** mostra o estado dos dois programas
 externos e o que cada um habilita nesta máquina.
@@ -358,8 +412,8 @@ O FFmpeg e o LibreOffice continuam sendo dependências externas nos dois
 caminhos — eles não são embutidos no `setup.exe`, que ficaria com
 centenas de megabytes por causa de conversões que a maioria das pessoas
 não usa. Sem o FFmpeg, áudio e vídeo não aparecem no seletor de formato;
-sem o LibreOffice, "PDF" não aparece para um DOCX. Todo o resto funciona
-na máquina de destino sem instalar mais nada.
+sem o LibreOffice, "PDF" não aparece para um DOCX nem para um XLSX. Todo
+o resto funciona na máquina de destino sem instalar mais nada.
 
 ## Desinstalando
 
@@ -414,15 +468,16 @@ FileMorph/
 ├── app/
 │   ├── core/                # lógica central: conversão, junção, fila,
 │   │                          validação — nada de UI aqui
-│   ├── converters/          # um módulo por família de formato:
-│   │                          image, pdf, audio, video e document
-│   │                          implementados (media_converter.py é a
-│   │                          base comum de áudio/vídeo, e
-│   │                          document_converter.py traz a sua);
-│   │                          spreadsheet ainda é um stub
+│   ├── converters/          # um módulo por família de formato, todos
+│   │                          implementados: image, pdf, audio, video,
+│   │                          document e spreadsheet
+│   │                          (media_converter.py é a base comum de
+│   │                          áudio/vídeo; document_converter.py traz
+│   │                          a que a planilha também usa)
 │   ├── mergers/             # um módulo por família de junção;
 │   │                          pdf_merger.py implementado (PDFs,
-│   │                          imagens e documentos em um único PDF)
+│   │                          imagens, documentos e planilhas em um
+│   │                          único PDF)
 │   ├── ui/                  # janelas e widgets PySide6
 │   ├── utils/                # logging, arquivos temporários, ffmpeg,
 │   │                          libreoffice, utilitários de arquivo
@@ -545,13 +600,11 @@ exercitado é o de produção (leitura do andamento, encerramento do
 processo, tradução do erro, gravação atômica), e a única peça falsa é o
 programa do outro lado do cano.
 
-## Próximos passos (Fase 9+)
+## Próximos passos
 
-Com o mascote animado, todas as fases do roteiro original estão
-entregues — o que vem daqui para frente é ampliação, não plano
-pendente. Resumidamente:
+Todas as fases do roteiro original estão entregues — o que vem daqui
+para frente é ampliação, não plano pendente. Resumidamente:
 
-- **Planilhas**: XLSX e CSV, com o openpyxl já listado nas dependências.
 - **Ainda em imagens**: BMP, TIFF e GIF, que ficaram fora da Fase 3 por
   exigirem tratamento próprio (paleta e animação).
 - **Ainda em mídia**: opções de qualidade escolhidas pelo usuário
@@ -560,3 +613,5 @@ pendente. Resumidamente:
 - **Ainda em documentos**: PDF → DOCX, que é o caminho mais difícil de
   todos (reconstruir parágrafos e tabelas a partir de posições de texto
   numa página), e ODT/RTF como origem, que o LibreOffice já saberia ler.
+- **Ainda em planilhas**: ODS como origem (também via LibreOffice) e
+  CSV → PDF, que hoje exige passar pelo XLSX no meio.

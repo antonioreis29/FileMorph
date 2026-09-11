@@ -132,19 +132,43 @@ def register_builtin_converters(
             registered.append("TextToPdfConverter (PyMuPDF)")
             registered.append("PdfToTextConverter (PyMuPDF)")
 
-    # --- Documentos para PDF (LibreOffice) -------------------------------
+    # --- Planilhas (openpyxl) --------------------------------------------
+    try:
+        from app.converters.spreadsheet_converter import (
+            OPENPYXL_AVAILABLE,
+            CsvToXlsxConverter,
+            XlsxToCsvConverter,
+        )
+    except ImportError as exc:
+        logger.warning("Conversões de planilha indisponíveis (%s).", exc)
+    else:
+        if OPENPYXL_AVAILABLE:
+            target.register(XlsxToCsvConverter())
+            target.register(CsvToXlsxConverter())
+            registered.append("XlsxToCsvConverter (openpyxl)")
+            registered.append("CsvToXlsxConverter (openpyxl)")
+        else:
+            logger.warning(
+                "openpyxl não está instalado — as conversões entre XLSX e CSV "
+                "ficarão indisponíveis nesta execução."
+            )
+
+    # --- Arquivos de escritório para PDF (LibreOffice) -------------------
     # Como no bloco do FFmpeg, aqui a dependência é um programa externo e
     # não um pacote pip: sem LibreOffice, "PDF" simplesmente não aparece
-    # no seletor de formato para um DOCX (item 37).
+    # no seletor de formato para um DOCX ou um XLSX (item 37).
     if libreoffice_manager.is_available():
         from app.converters.document_converter import DocxToPdfConverter
+        from app.converters.spreadsheet_converter import SpreadsheetToPdfConverter
 
-        target.register(DocxToPdfConverter())
         version = libreoffice_manager.status().version or "versão desconhecida"
+        target.register(DocxToPdfConverter())
+        target.register(SpreadsheetToPdfConverter())
         registered.append(f"DocxToPdfConverter (LibreOffice {version})")
+        registered.append("SpreadsheetToPdfConverter (LibreOffice)")
     else:
         logger.warning(
-            "LibreOffice não encontrado — converter DOCX em PDF ficará "
+            "LibreOffice não encontrado — converter DOCX ou XLSX em PDF ficará "
             "indisponível nesta execução."
         )
 

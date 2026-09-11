@@ -2,9 +2,8 @@
 Localização dos arquivos de recurso do FileMorph (ícone e mascote).
 
 Em desenvolvimento os recursos ficam em `assets/`, ao lado do `main.py`.
-Empacotado com PyInstaller (fase futura), eles passam a viver dentro da
-pasta temporária que o executável descompacta, apontada por
-`sys._MEIPASS`. Este módulo esconde essa diferença: o resto do
+Empacotado com PyInstaller, eles passam a viver ao lado do executável,
+na pasta apontada por `sys._MEIPASS`. Este módulo esconde essa diferença: o resto do
 aplicativo pede um caminho e não precisa saber em qual dos dois mundos
 está rodando — a mesma preocupação que `app/config/settings.py` já tem
 com a pasta de dados do usuário.

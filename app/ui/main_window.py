@@ -600,7 +600,10 @@ class MainWindow(QMainWindow):
         if not ffmpeg_manager.status().available:
             logger.info("FFmpeg não encontrado — conversões de áudio/vídeo ficarão indisponíveis.")
         if not libreoffice_manager.status().available:
-            logger.info("LibreOffice não encontrado — DOCX para PDF ficará indisponível.")
+            logger.info(
+                "LibreOffice não encontrado — DOCX e XLSX para PDF ficarão "
+                "indisponíveis."
+            )
 
     def _check_dependencies_dialog(self) -> None:
         """Relata o estado real dos dois programas externos do projeto.
@@ -658,11 +661,12 @@ class MainWindow(QMainWindow):
         if not status.available:
             return (
                 "✗ LibreOffice não encontrado no sistema.\n"
-                "Ele é necessário apenas para converter DOCX em PDF, que é a "
-                "conversão que precisa paginar o documento. As demais "
-                "conversões de documento (DOCX em TXT, TXT em DOCX, TXT em PDF "
-                "e PDF em TXT) funcionam sem ele.\n"
-                "Para habilitá-la, instale o LibreOffice (libreoffice.org)."
+                "Ele é necessário apenas para converter DOCX e XLSX em PDF, "
+                "que são as conversões que precisam paginar o arquivo. As "
+                "demais conversões de documento (DOCX em TXT, TXT em DOCX, TXT "
+                "em PDF e PDF em TXT) e de planilha (XLSX em CSV e CSV em "
+                "XLSX) funcionam sem ele.\n"
+                "Para habilitá-las, instale o LibreOffice (libreoffice.org)."
             )
 
         version = status.version or "desconhecida"
@@ -671,12 +675,12 @@ class MainWindow(QMainWindow):
                 f"✓ LibreOffice encontrado (versão {version}), mas ele ainda "
                 "não está em uso nesta sessão.\n"
                 "Feche e abra o FileMorph para habilitar a conversão de DOCX "
-                "em PDF."
+                "e XLSX em PDF."
             )
         return (
             f"✓ LibreOffice encontrado (versão {version}).\n"
-            "Um DOCX pode virar PDF com o layout preservado, e também entra no "
-            "modo Juntar."
+            "Um DOCX ou um XLSX podem virar PDF com o layout preservado, e "
+            "também entram no modo Juntar."
         )
 
     @staticmethod
@@ -704,19 +708,25 @@ class MainWindow(QMainWindow):
             "Esta versão converte imagens entre PNG, JPG e WEBP, transforma "
             "imagens em PDF e PDF em imagens, converte áudio entre MP3, WAV, "
             "FLAC, OGG e M4A, converte vídeo entre MP4, MKV e WEBM, extrai a "
-            "trilha sonora de um vídeo como arquivo de áudio e converte "
-            "documentos entre DOCX, TXT e PDF. Os arquivos convertidos são "
-            "salvos na pasta definida em Configurações, e o original nunca é "
-            "alterado.\n\n"
-            "No modo Juntar, vários PDFs, imagens e documentos viram um único "
-            "PDF, na ordem em que aparecem na lista.\n\n"
+            "trilha sonora de um vídeo como arquivo de áudio, converte "
+            "documentos entre DOCX, TXT e PDF e planilhas entre XLSX e CSV. "
+            "Os arquivos convertidos são salvos na pasta definida em "
+            "Configurações, e o original nunca é alterado.\n\n"
+            "No modo Juntar, vários PDFs, imagens, documentos e planilhas "
+            "viram um único PDF, na ordem em que aparecem na lista.\n\n"
+            "Uma planilha de várias abas vira uma pasta com um CSV por aba, "
+            "porque um arquivo CSV guarda uma tabela só. E vindo do CSV, "
+            "apenas o que é inequivocamente número vira número: um CEP ou um "
+            "código com zero à esquerda continua texto, para não perder o "
+            "zero.\n\n"
             "Ir para TXT guarda só o texto: negrito, imagens e layout não "
             "couberam em um arquivo de texto, e isso vale para qualquer "
             "programa. Um PDF digitalizado também não tem texto por dentro — é "
             "a imagem de uma página —, e o FileMorph não faz reconhecimento de "
             "texto.\n\n"
-            "Áudio e vídeo dependem do FFmpeg instalado no sistema, e DOCX → "
-            "PDF depende do LibreOffice: use 'Verificar dependências' no menu "
+            "Áudio e vídeo dependem do FFmpeg instalado no sistema, e DOCX ou "
+            "XLSX → PDF dependem do LibreOffice: use 'Verificar dependências' "
+            "no menu "
             "para ver o que está habilitado nesta máquina. Converter vídeo é "
             "demorado — leva na ordem da duração do próprio vídeo —, e o botão "
             "Cancelar interrompe a conversão em andamento a qualquer momento.",
@@ -727,7 +737,8 @@ class MainWindow(QMainWindow):
             self,
             "Sobre o FileMorph",
             "FileMorph — converta, transforme e junte arquivos localmente.\n\n"
-            "Versão em desenvolvimento (Fase 8: imagens PNG/JPG/WEBP, PDF, "
+            "Versão em desenvolvimento (Fase 9: imagens PNG/JPG/WEBP, PDF, "
             "junção em PDF, áudio MP3/WAV/FLAC/OGG/M4A e vídeo MP4/MKV/WEBM "
-            "via FFmpeg, documentos DOCX/TXT/PDF e o mascote animado).",
+            "via FFmpeg, documentos DOCX/TXT/PDF, planilhas XLSX/CSV e o "
+            "mascote animado).",
         )

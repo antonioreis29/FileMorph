@@ -144,11 +144,25 @@ def test_mixes_a_docx_into_the_merge(tmp_path: Path) -> None:
     assert _page_widths(destination) == [100, 333]
 
 
-def test_docx_is_only_accepted_when_libreoffice_exists() -> None:
-    """Sem LibreOffice, .docx não entra na junção (item 37).
+def test_mixes_a_spreadsheet_into_the_merge(tmp_path: Path) -> None:
+    """Fase 9: a planilha entra na junção pelo mesmo caminho do .docx."""
+    pdf = _make_pdf(tmp_path / "capa.pdf", width=100)
+    planilha = tmp_path / "vendas.xlsx"
+    planilha.write_bytes(b"o fake_soffice nao le a planilha, so a converte")
+    destination = tmp_path / "pacote.pdf"
 
-    Aceitá-lo e falhar no meio seria pior: o usuário já teria escolhido o
-    nome do arquivo final e esperado a conversão dos demais.
+    merger = PdfMerger(_fake_libreoffice(width=222))
+    result = merger.merge([str(pdf), str(planilha)], str(destination))
+
+    assert result.success, result.error_message
+    assert _page_widths(destination) == [100, 222]
+
+
+def test_office_formats_are_only_accepted_when_libreoffice_exists() -> None:
+    """Sem LibreOffice, .docx e .xlsx não entram na junção (item 37).
+
+    Aceitá-los e falhar no meio seria pior: o usuário já teria escolhido
+    o nome do arquivo final e esperado a conversão dos demais.
     """
 
     class _Unavailable:
@@ -157,8 +171,8 @@ def test_docx_is_only_accepted_when_libreoffice_exists() -> None:
 
     sem_office = PdfMerger(_Unavailable()).accepted_formats
     com_office = PdfMerger(_fake_libreoffice()).accepted_formats
-    assert "docx" not in sem_office
-    assert "docx" in com_office
+    assert {"docx", "xlsx"}.isdisjoint(sem_office)
+    assert {"docx", "xlsx"}.issubset(com_office)
     # O que não depende de programa externo entra nos dois casos.
     assert {"pdf", "png", "txt"}.issubset(sem_office)
 
@@ -253,9 +267,11 @@ def test_registered_merger_answers_the_compatibility_layer() -> None:
     assert registry.can_merge(["png", "jpg", "pdf"])
     assert registry.can_merge(["png", "png"], target_ext="pdf")
     assert registry.can_merge(["pdf", "txt"])
-    # O .docx depende do LibreOffice estar instalado nesta máquina.
-    assert registry.can_merge(["pdf", "docx"]) == libreoffice_manager.is_available()
-    # Formatos de fases futuras continuam sem junção disponível.
+    # O .docx e o .xlsx dependem do LibreOffice estar nesta máquina.
+    disponivel = libreoffice_manager.is_available()
+    assert registry.can_merge(["pdf", "docx"]) == disponivel
+    assert registry.can_merge(["pdf", "xlsx"]) == disponivel
+    # O que não tem conversão para PDF continua sem junção disponível.
     assert not registry.can_merge(["mp3", "mp3"])
-    assert not registry.can_merge(["xlsx", "pdf"])
+    assert not registry.can_merge(["mp4", "pdf"])
     assert register_builtin_mergers(registry) == []  # idempotente

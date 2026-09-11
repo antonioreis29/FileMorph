@@ -15,6 +15,12 @@ seletor de formato numa máquina sem LibreOffice (ver
 `app/utils/libreoffice_manager.py` para o porquê de não tentarmos
 paginar um DOCX em Python).
 
+Duas peças daqui são reaproveitadas pelo conversor de planilhas da
+Fase 9 (`spreadsheet_converter.py`), porque planilha e documento têm
+exatamente o mesmo roteiro por dentro: `DocumentConverter`, que é o
+esqueleto da conversão (temporário, erro traduzido, cancelamento), e
+`LibreOfficeToPdfConverter`, que é o caminho para o programa externo.
+
 **O que se perde em cada direção, e por quê.** Diferente de imagem ou
 áudio, aqui a conversão quase nunca é simétrica, e isso é da natureza
 dos formatos, não uma limitação do FileMorph:
@@ -156,12 +162,17 @@ PDF_TEXT_REPLACEMENTS = str.maketrans(
 _PROGRESS_EVERY = 200
 
 
-class _DocumentError(Exception):
-    """Problema no documento, com a mensagem já pronta para o usuário.
+class ConversionProblem(Exception):
+    """Problema no arquivo, com a mensagem já pronta para o usuário.
 
     Serve para interromper a conversão lá de dentro sem espalhar
     checagens de retorno pelo caminho — o mesmo papel que o
     `_MergeInputError` tem na junção.
+
+    O nome não é privado porque faz parte do contrato da classe base: o
+    conversor de planilhas (Fase 9) herda de `DocumentConverter` a partir
+    de outro módulo, e é levantando esta exceção que ele reporta um
+    problema ao usuário.
     """
 
 
@@ -180,7 +191,7 @@ def read_text_file(path: str | Path) -> str:
         except UnicodeDecodeError:
             continue
     # Inalcançável na prática: o latin-1 decodifica qualquer byte.
-    raise _DocumentError(  # pragma: no cover
+    raise ConversionProblem(  # pragma: no cover
         f"Não foi possível identificar a codificação de '{get_filename(path)}'."
     )
 
@@ -235,18 +246,24 @@ class DocumentConverter(BaseConverter):
             )
 
         temp_output: Path | None = None
+        produced: Path = destination
         try:
             context.check_cancelled()
             ensure_directory(destination.parent)
             temp_output = temp_output_path(destination)
 
-            self._perform(source, temp_output, context)
+            escrito = self._perform(source, temp_output, destination, context)
 
-            temp_output.replace(destination)
-            temp_output = None
+            if escrito is None:
+                temp_output.replace(destination)
+                temp_output = None
+            else:
+                # A conversão gravou onde quis (uma pasta com vários
+                # arquivos, por exemplo) e o temporário nem foi usado.
+                produced = escrito
         except OperationCancelled:
             raise  # não é falha: quem trata é a fila
-        except _DocumentError as exc:
+        except ConversionProblem as exc:
             return self._failure(input_path, str(exc))
         except PermissionError:
             return self._failure(
@@ -278,18 +295,37 @@ class DocumentConverter(BaseConverter):
             "Conversão concluída | %s | %s -> %s | %.2fs",
             self.backend,
             get_filename(source),
-            get_filename(destination),
+            get_filename(produced),
             time.monotonic() - started_at,
         )
         return ConversionResult(
-            success=True, input_path=input_path, output_path=str(destination)
+            success=True, input_path=input_path, output_path=str(produced)
         )
 
-    def _perform(self, source: Path, temp_output: Path, context: TaskContext) -> None:
+    def _perform(
+        self,
+        source: Path,
+        temp_output: Path,
+        destination: Path,
+        context: TaskContext,
+    ) -> Path | None:
         """Faz a conversão, gravando em `temp_output`.
 
-        Deve levantar `_DocumentError` para um problema que o usuário
+        `destination` é o caminho final pedido. Quem grava um arquivo só
+        não precisa dele — a classe base é que move o temporário para
+        lá —, mas quem grava vários precisa saber o nome que o usuário
+        escolheu para batizar a pasta de saída.
+
+        Deve levantar `ConversionProblem` para um problema que o usuário
         precisa entender, e deixar `OperationCancelled` subir.
+
+        O retorno normal é `None`: a conversão gravou no temporário e a
+        classe base o move para o destino, o que é o que mantém a
+        gravação atômica. Uma conversão que produz **vários** arquivos
+        (uma planilha de três abas virando três CSVs, na Fase 9) não cabe
+        nesse arranjo: ela grava onde precisa e devolve o caminho do
+        resultado — a pasta, nesse caso —, assumindo a responsabilidade
+        de limpar o que escreveu se algo der errado no meio.
         """
         raise NotImplementedError
 
@@ -338,9 +374,15 @@ class DocxToTextConverter(DocumentConverter):
     produces = "texto"
     backend = "python-docx"
 
-    def _perform(self, source: Path, temp_output: Path, context: TaskContext) -> None:
+    def _perform(
+        self,
+        source: Path,
+        temp_output: Path,
+        destination: Path,
+        context: TaskContext,
+    ) -> None:
         if not DOCX_AVAILABLE:  # rede de segurança: sem a lib nem é registrado
-            raise _DocumentError(
+            raise ConversionProblem(
                 "A leitura de DOCX depende do python-docx, que não está "
                 "instalado. Rode 'pip install -r requirements.txt' para "
                 "habilitá-la."
@@ -350,7 +392,7 @@ class DocxToTextConverter(DocumentConverter):
             document = docx.Document(str(source))
         except Exception as exc:  # noqa: BLE001 — python-docx sinaliza assim
             logger.warning("DOCX ilegível: %s (%s)", source, exc)
-            raise _DocumentError(
+            raise ConversionProblem(
                 f"'{get_filename(source)}' não é um documento do Word válido, "
                 "está corrompido ou protegido por senha."
             ) from exc
@@ -370,7 +412,7 @@ class DocxToTextConverter(DocumentConverter):
             # Um DOCX só de imagens geraria um .txt vazio, e o usuário
             # ficaria sem entender o que aconteceu. Dizer o motivo é mais
             # útil do que entregar um arquivo em branco.
-            raise _DocumentError(
+            raise ConversionProblem(
                 f"'{get_filename(source)}' não tem texto para extrair — o "
                 "conteúdo parece ser apenas imagens ou objetos."
             )
@@ -392,9 +434,15 @@ class TextToDocxConverter(DocumentConverter):
     produces = "documento do Word"
     backend = "python-docx"
 
-    def _perform(self, source: Path, temp_output: Path, context: TaskContext) -> None:
+    def _perform(
+        self,
+        source: Path,
+        temp_output: Path,
+        destination: Path,
+        context: TaskContext,
+    ) -> None:
         if not DOCX_AVAILABLE:  # rede de segurança: sem a lib nem é registrado
-            raise _DocumentError(
+            raise ConversionProblem(
                 "A gravação de DOCX depende do python-docx, que não está "
                 "instalado. Rode 'pip install -r requirements.txt' para "
                 "habilitá-la."
@@ -476,9 +524,15 @@ class TextToPdfConverter(DocumentConverter):
     produces = "PDF"
     backend = "PyMuPDF"
 
-    def _perform(self, source: Path, temp_output: Path, context: TaskContext) -> None:
+    def _perform(
+        self,
+        source: Path,
+        temp_output: Path,
+        destination: Path,
+        context: TaskContext,
+    ) -> None:
         if not PYMUPDF_AVAILABLE:  # rede de segurança: sem a lib nem é registrado
-            raise _DocumentError(
+            raise ConversionProblem(
                 "A gravação de PDF a partir de texto depende do PyMuPDF, que "
                 "não está instalado. Rode 'pip install -r requirements.txt' "
                 "para habilitá-la."
@@ -548,9 +602,15 @@ class PdfToTextConverter(DocumentConverter):
     produces = "texto"
     backend = "PyMuPDF"
 
-    def _perform(self, source: Path, temp_output: Path, context: TaskContext) -> None:
+    def _perform(
+        self,
+        source: Path,
+        temp_output: Path,
+        destination: Path,
+        context: TaskContext,
+    ) -> None:
         if not PYMUPDF_AVAILABLE:  # rede de segurança: sem a lib nem é registrado
-            raise _DocumentError(
+            raise ConversionProblem(
                 "A leitura de PDF depende do PyMuPDF, que não está instalado. "
                 "Rode 'pip install -r requirements.txt' para habilitá-la."
             )
@@ -559,20 +619,20 @@ class PdfToTextConverter(DocumentConverter):
             document = pymupdf.open(source)
         except Exception as exc:  # noqa: BLE001 — PyMuPDF sinaliza assim
             logger.warning("PDF ilegível: %s (%s)", source, exc)
-            raise _DocumentError(
+            raise ConversionProblem(
                 f"'{get_filename(source)}' não é um PDF válido ou está "
                 "corrompido."
             ) from exc
 
         try:
             if document.needs_pass:
-                raise _DocumentError(
+                raise ConversionProblem(
                     f"'{get_filename(source)}' está protegido por senha. "
                     "Remova a proteção antes de converter."
                 )
             page_count = document.page_count
             if page_count == 0:
-                raise _DocumentError(f"'{get_filename(source)}' não tem páginas.")
+                raise ConversionProblem(f"'{get_filename(source)}' não tem páginas.")
 
             # As páginas são separadas por uma linha em branco. Um
             # marcador do tipo "--- página 2 ---" seria texto que o
@@ -588,7 +648,7 @@ class PdfToTextConverter(DocumentConverter):
 
         content = "\n\n".join(chunk for chunk in chunks if chunk).strip()
         if not content:
-            raise _DocumentError(
+            raise ConversionProblem(
                 f"'{get_filename(source)}' não tem texto para extrair. Ele "
                 "parece ser um documento digitalizado (imagens de páginas), e "
                 "o FileMorph não faz reconhecimento de texto."
@@ -598,21 +658,29 @@ class PdfToTextConverter(DocumentConverter):
         temp_output.write_text(content + "\n", encoding="utf-8")
 
 
-# --- DOCX -> PDF (LibreOffice) --------------------------------------------
+# --- Arquivos de escritório -> PDF (LibreOffice) --------------------------
 
 
-class DocxToPdfConverter(DocumentConverter):
-    """Converte um DOCX em PDF preservando o layout (LibreOffice headless).
+class LibreOfficeToPdfConverter(DocumentConverter):
+    """Base dos conversores que entregam o trabalho ao LibreOffice.
 
-    Único conversor de documento que depende de um programa externo, e o
-    único que é registrado condicionalmente: sem LibreOffice instalado,
-    "PDF" não aparece no seletor de formato para um DOCX.
+    Só o que vira PDF passa por aqui, e sempre pelo mesmo motivo: quem
+    sabe paginar um arquivo de escritório é um programa de escritório.
+    As subclasses entram apenas com as extensões que aceitam — a
+    mecânica (pasta temporária, gravação atômica, tradução do erro) é a
+    mesma para todas.
+
+    A Fase 9 é que justificou a base: a planilha (`spreadsheet_converter`)
+    precisa exatamente deste caminho, e duplicá-lo lá seria manter duas
+    cópias do mesmo cuidado com arquivo temporário e cancelamento.
     """
 
-    sources = {"docx"}
     targets = {"pdf"}
     produces = "PDF"
     backend = "LibreOffice"
+
+    #: Nome da família, só para a mensagem de erro ("documento", "planilha").
+    familia = "arquivo"
 
     def __init__(self, manager: LibreOfficeManager | None = None) -> None:
         # O gerenciador é injetável para que os testes possam usar um
@@ -621,11 +689,18 @@ class DocxToPdfConverter(DocumentConverter):
         # estar instalado na máquina que roda a suíte.
         self._manager = manager or libreoffice_manager
 
-    def _perform(self, source: Path, temp_output: Path, context: TaskContext) -> None:
+    def _perform(
+        self,
+        source: Path,
+        temp_output: Path,
+        destination: Path,
+        context: TaskContext,
+    ) -> None:
         if not self._manager.is_available():  # rede de segurança
-            raise _DocumentError(
-                "A conversão de DOCX para PDF depende do LibreOffice, que não "
-                "foi encontrado nesta máquina. Instale-o para habilitá-la."
+            raise ConversionProblem(
+                f"A conversão de {self.familia} para PDF depende do "
+                "LibreOffice, que não foi encontrado nesta máquina. "
+                "Instale-o para habilitá-la."
             )
 
         # O LibreOffice não aceita um nome de arquivo de saída, só uma
@@ -643,6 +718,17 @@ class DocxToPdfConverter(DocumentConverter):
             shutil.move(str(produced), str(temp_output))
         except LibreOfficeError as exc:
             # A mensagem já vem traduzida pelo gerenciador.
-            raise _DocumentError(str(exc)) from exc
+            raise ConversionProblem(str(exc)) from exc
         finally:
             temp_manager.cleanup(session_id)
+
+
+class DocxToPdfConverter(LibreOfficeToPdfConverter):
+    """Converte um DOCX em PDF preservando o layout (LibreOffice headless).
+
+    Registrado condicionalmente: sem LibreOffice instalado, "PDF" não
+    aparece no seletor de formato para um DOCX.
+    """
+
+    sources = {"docx"}
+    familia = "DOCX"

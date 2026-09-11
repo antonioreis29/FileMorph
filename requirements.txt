@@ -1,12 +1,10 @@
 # FileMorph — dependências
 #
-# As dependências estão organizadas por fase de implementação.
-# Na entrega atual (Fases 1 a 7), os blocos "Interface", "Imagens",
-# "PDF" e "Documentos" são os que o aplicativo realmente usa — áudio e
-# vídeo não entram aqui porque dependem do FFmpeg, e a conversão de DOCX
-# em PDF depende do LibreOffice; nenhum dos dois é um pacote pip (veja as
-# observações no fim do arquivo). As demais bibliotecas já estão listadas
-# para que os conversores futuros não exijam reinstalação de ambiente.
+# As dependências estão organizadas por fase de implementação, e na
+# entrega atual (Fases 1 a 9) todas são usadas de verdade. Áudio e vídeo
+# não aparecem na lista porque dependem do FFmpeg, e a conversão de DOCX
+# ou XLSX em PDF depende do LibreOffice: nenhum dos dois é um pacote pip
+# (veja as observações no fim do arquivo).
 
 # --- Interface (Fase 1-2) ---
 PySide6>=6.6.0
@@ -26,7 +24,9 @@ PyMuPDF>=1.23.0
 # usam o PyMuPDF já listado acima; só o DOCX -> PDF precisa do LibreOffice.
 python-docx>=1.1.0
 
-# --- Planilhas (futuro) ---
+# --- Planilhas (Fase 9) ---
+# openpyxl lê e escreve XLSX. O CSV é o módulo `csv` da biblioteca
+# padrão; só o XLSX -> PDF precisa do LibreOffice.
 openpyxl>=3.1.0
 
 # --- Empacotamento (Fase 10) ---
@@ -41,9 +41,9 @@ pytest>=8.0.0
 #   pacote pip. Baixe em ffmpeg.org e adicione a pasta 'bin' ao PATH do
 #   Windows. Sem ele o aplicativo abre normalmente: apenas as conversões
 #   de áudio e vídeo deixam de aparecer no seletor de formato.
-# - DOCX -> PDF (Fase 7) depende do LibreOffice em modo headless,
-#   detectado e executado por app/utils/libreoffice_manager.py — também
-#   um programa externo, não um pacote pip. Instale-o de libreoffice.org.
-#   Sem ele as outras quatro conversões de documento (DOCX -> TXT,
-#   TXT -> DOCX, TXT -> PDF e PDF -> TXT) continuam funcionando: só
-#   "PDF" deixa de ser oferecido para um DOCX.
+# - DOCX -> PDF (Fase 7) e XLSX -> PDF (Fase 9) dependem do LibreOffice
+#   em modo headless, detectado e executado por
+#   app/utils/libreoffice_manager.py — também um programa externo, não um
+#   pacote pip. Instale-o de libreoffice.org. Sem ele as demais
+#   conversões de documento e de planilha continuam funcionando: só o
+#   destino "PDF" deixa de ser oferecido para um DOCX ou um XLSX.

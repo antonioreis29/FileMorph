@@ -10,7 +10,8 @@ interface (item 12):
 O que não é PDF não é página de PDF por si só, então cada arquivo passa
 antes pelo conversor da sua família — `ImageToPdfConverter` para
 imagens, `TextToPdfConverter` para .txt, `DocxToPdfConverter` para
-.docx —, gerando um PDF temporário que é concatenado com os demais.
+.docx, `SpreadsheetToPdfConverter` para .xlsx —, gerando um PDF
+temporário que é concatenado com os demais.
 Esse é exatamente o "pipeline de conversão intermediária" do item 13, e
 os arquivos intermediários ficam sob o controle do `temp_manager`
 (item 24), que os apaga ao final — tenha a junção dado certo ou errado.
@@ -22,9 +23,10 @@ Foi por isso que a Fase 7 ampliou este merger em vez de acrescentar um
 "merger de documentos" ao lado dele.
 
 O preço de aceitar documentos é que a lista de formatos de entrada deixa
-de ser fixa: ela depende do que esta máquina tem instalado. Um .docx só
-entra na junção se o LibreOffice estiver presente, porque é ele que
-transforma o documento em PDF (ver `document_converter.py`).
+de ser fixa: ela depende do que esta máquina tem instalado. Um .docx ou
+um .xlsx só entram na junção se o LibreOffice estiver presente, porque é
+ele que os transforma em PDF (ver `document_converter.py` e
+`spreadsheet_converter.py`).
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from app.converters.document_converter import (
     TextToPdfConverter,
 )
 from app.converters.pdf_converter import ImageToPdfConverter
+from app.converters.spreadsheet_converter import SpreadsheetToPdfConverter
 from app.core.converter import BaseConverter
 from app.core.merger import BaseMerger, MergeResult
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
@@ -96,6 +99,7 @@ class PdfMerger(BaseMerger):
         office = libreoffice or libreoffice_manager
         if office.is_available():
             self._to_pdf["docx"] = DocxToPdfConverter(office)
+            self._to_pdf["xlsx"] = SpreadsheetToPdfConverter(office)
 
     @property
     def accepted_formats(self) -> set[str]:
