@@ -205,7 +205,8 @@ def test_registry_offers_both_directions() -> None:
     assert registry.can_convert("png", "pdf")
     assert registry.can_convert("jpg", "pdf")
     assert registry.can_convert("pdf", "png")
-    assert registry.available_targets_for("pdf") == {"png", "jpg", "webp"}
+    # O TXT entrou nesta lista na Fase 7, junto com a extração de texto.
+    assert registry.available_targets_for("pdf") == {"png", "jpg", "webp", "txt"}
     # Imagens agora podem virar PDF, além dos outros formatos de imagem.
     assert registry.available_targets_for("png") == {"png", "jpg", "webp", "pdf"}
     # Um PDF e uma imagem juntos só podem ir para o que serve aos dois.

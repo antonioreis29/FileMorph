@@ -16,6 +16,13 @@ A partir da Fase 6 a checagem vai um passo além para áudio e vídeo:
 não basta o FFmpeg existir, ele precisa ter os codificadores daquele
 formato compilados. Um conversor pode acabar registrado oferecendo
 apenas parte dos seus destinos.
+
+A Fase 7 acrescentou o segundo programa externo do projeto, o
+LibreOffice, e com ele um caso novo: uma mesma família de formato
+(documentos) tem conversões que são Python puro e uma — DOCX para PDF —
+que depende do programa externo. Elas são decididas em blocos separados,
+de modo que a ausência do LibreOffice tira apenas aquele destino do
+seletor, sem levar as outras conversões de documento com ele.
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ import weakref
 
 from app.core.converter import CompatibilityRegistry, compatibility_registry
 from app.utils.ffmpeg_manager import ffmpeg_manager
+from app.utils.libreoffice_manager import libreoffice_manager
 from app.utils.logger import get_logger
 
 logger = get_logger("converters")
@@ -90,6 +98,55 @@ def register_builtin_converters(
                 "PyMuPDF não está instalado — converter PDF em imagens ficará "
                 "indisponível nesta execução."
             )
+
+    # --- Documentos (python-docx, PyMuPDF e LibreOffice) -----------------
+    # As quatro primeiras conversões são Python puro; DOCX -> PDF é a
+    # única que depende de um programa externo, e por isso é decidida em
+    # separado, logo abaixo.
+    try:
+        from app.converters.document_converter import (
+            DOCX_AVAILABLE,
+            PYMUPDF_AVAILABLE as DOC_PYMUPDF_AVAILABLE,
+            DocxToTextConverter,
+            PdfToTextConverter,
+            TextToDocxConverter,
+            TextToPdfConverter,
+        )
+    except ImportError as exc:
+        logger.warning("Conversões de documento indisponíveis (%s).", exc)
+    else:
+        if DOCX_AVAILABLE:
+            target.register(DocxToTextConverter())
+            target.register(TextToDocxConverter())
+            registered.append("DocxToTextConverter (python-docx)")
+            registered.append("TextToDocxConverter (python-docx)")
+        else:
+            logger.warning(
+                "python-docx não está instalado — a leitura e a gravação de "
+                "DOCX ficarão indisponíveis nesta execução."
+            )
+
+        if DOC_PYMUPDF_AVAILABLE:
+            target.register(TextToPdfConverter())
+            target.register(PdfToTextConverter())
+            registered.append("TextToPdfConverter (PyMuPDF)")
+            registered.append("PdfToTextConverter (PyMuPDF)")
+
+    # --- Documentos para PDF (LibreOffice) -------------------------------
+    # Como no bloco do FFmpeg, aqui a dependência é um programa externo e
+    # não um pacote pip: sem LibreOffice, "PDF" simplesmente não aparece
+    # no seletor de formato para um DOCX (item 37).
+    if libreoffice_manager.is_available():
+        from app.converters.document_converter import DocxToPdfConverter
+
+        target.register(DocxToPdfConverter())
+        version = libreoffice_manager.status().version or "versão desconhecida"
+        registered.append(f"DocxToPdfConverter (LibreOffice {version})")
+    else:
+        logger.warning(
+            "LibreOffice não encontrado — converter DOCX em PDF ficará "
+            "indisponível nesta execução."
+        )
 
     # --- Áudio e vídeo (FFmpeg) ------------------------------------------
     # Diferente dos anteriores, este bloco não depende de um pacote pip e

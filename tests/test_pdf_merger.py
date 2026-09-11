@@ -1,14 +1,17 @@
 """
-Testes da junção de arquivos da Fase 4 (itens 12, 13 e 34 do briefing).
+Testes da junção de arquivos da Fase 4, ampliados na Fase 7
+(itens 12, 13 e 34 do briefing).
 
 Verificam o que mais importa numa junção: que o resultado tenha todas
-as páginas, **na ordem em que o usuário as colocou**, que imagens e
-PDFs possam ser misturados, e que os arquivos intermediários da
-conversão de imagens não fiquem para trás.
+as páginas, **na ordem em que o usuário as colocou**, que formatos
+diferentes possam ser misturados — imagens e, desde a Fase 7, também
+documentos — e que os arquivos intermediários da conversão não fiquem
+para trás.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,7 +26,25 @@ import pymupdf  # noqa: E402
 from app.core.merger import MergeCompatibilityRegistry  # noqa: E402
 from app.mergers import register_builtin_mergers  # noqa: E402
 from app.mergers.pdf_merger import PdfMerger  # noqa: E402
+from app.utils.libreoffice_manager import (  # noqa: E402
+    LibreOfficeManager,
+    libreoffice_manager,
+)
 from app.utils.temp_manager import temp_manager  # noqa: E402
+
+FAKE_SOFFICE = Path(__file__).parent / "fake_soffice.py"
+
+
+def _fake_libreoffice(**options: object) -> LibreOfficeManager:
+    """Um LibreOffice de mentira, para a junção que inclui um .docx.
+
+    Ver `tests/fake_soffice.py`: sem ele, esta parte do teste só rodaria
+    em máquina com o LibreOffice instalado.
+    """
+    command = [sys.executable, str(FAKE_SOFFICE)]
+    for name, value in options.items():
+        command += [f"--{name}", str(value)]
+    return LibreOfficeManager(executable=command)
 
 
 def _make_pdf(path: Path, pages: int = 1, width: int = 100) -> Path:
@@ -88,6 +109,58 @@ def test_mixes_pdfs_and_images(tmp_path: Path) -> None:
 
     assert result.success, result.error_message
     assert _page_widths(destination) == [100, 300, 100]
+
+
+def test_mixes_a_text_file_into_the_merge(tmp_path: Path) -> None:
+    """Fase 7: um .txt também vira página, pelo mesmo pipeline das imagens."""
+    pdf = _make_pdf(tmp_path / "capa.pdf", width=100)
+    texto = tmp_path / "anotacoes.txt"
+    texto.write_text("uma anotação qualquer\n", encoding="utf-8")
+    destination = tmp_path / "tudo.pdf"
+
+    result = PdfMerger().merge([str(pdf), str(texto)], str(destination))
+
+    assert result.success, result.error_message
+    with pymupdf.open(destination) as document:
+        assert document.page_count == 2
+        assert "uma anotação qualquer" in document[1].get_text()
+
+
+def test_mixes_a_docx_into_the_merge(tmp_path: Path) -> None:
+    """Fase 7: o .docx passa pelo LibreOffice antes de ser concatenado.
+
+    É o segundo exemplo de pipeline do item 13 — e a ordem do documento
+    final continua sendo a ordem da lista.
+    """
+    pdf = _make_pdf(tmp_path / "capa.pdf", width=100)
+    documento = tmp_path / "contrato.docx"
+    documento.write_bytes(b"o fake_soffice nao le o documento, so o converte")
+    destination = tmp_path / "processo.pdf"
+
+    merger = PdfMerger(_fake_libreoffice(width=333))
+    result = merger.merge([str(pdf), str(documento)], str(destination))
+
+    assert result.success, result.error_message
+    assert _page_widths(destination) == [100, 333]
+
+
+def test_docx_is_only_accepted_when_libreoffice_exists() -> None:
+    """Sem LibreOffice, .docx não entra na junção (item 37).
+
+    Aceitá-lo e falhar no meio seria pior: o usuário já teria escolhido o
+    nome do arquivo final e esperado a conversão dos demais.
+    """
+
+    class _Unavailable:
+        def is_available(self) -> bool:
+            return False
+
+    sem_office = PdfMerger(_Unavailable()).accepted_formats
+    com_office = PdfMerger(_fake_libreoffice()).accepted_formats
+    assert "docx" not in sem_office
+    assert "docx" in com_office
+    # O que não depende de programa externo entra nos dois casos.
+    assert {"pdf", "png", "txt"}.issubset(sem_office)
 
 
 def test_temporary_files_are_cleaned_up(tmp_path: Path) -> None:
@@ -179,7 +252,10 @@ def test_registered_merger_answers_the_compatibility_layer() -> None:
     assert registry.can_merge(["pdf", "pdf"])
     assert registry.can_merge(["png", "jpg", "pdf"])
     assert registry.can_merge(["png", "png"], target_ext="pdf")
+    assert registry.can_merge(["pdf", "txt"])
+    # O .docx depende do LibreOffice estar instalado nesta máquina.
+    assert registry.can_merge(["pdf", "docx"]) == libreoffice_manager.is_available()
     # Formatos de fases futuras continuam sem junção disponível.
     assert not registry.can_merge(["mp3", "mp3"])
-    assert not registry.can_merge(["pdf", "docx"])
+    assert not registry.can_merge(["xlsx", "pdf"])
     assert register_builtin_mergers(registry) == []  # idempotente

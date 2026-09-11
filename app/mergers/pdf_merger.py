@@ -1,22 +1,30 @@
 """
-Junção de arquivos em um único PDF (FASE 4 do briefing).
+Junção de arquivos em um único PDF (FASE 4, ampliada na FASE 7).
 
-É o primeiro merger real do FileMorph. Aceita PDFs e imagens na mesma
-seleção, na ordem em que aparecem na lista da interface (item 12):
+É o primeiro merger real do FileMorph. Aceita PDFs, imagens e
+documentos na mesma seleção, na ordem em que aparecem na lista da
+interface (item 12):
 
-    contrato.pdf + foto.jpg + anexo.pdf  ->  documento_final.pdf
+    contrato.docx + foto.jpg + anexo.pdf  ->  documento_final.pdf
 
-Imagens não são páginas de PDF por si só, então cada uma passa antes
-pelo `ImageToPdfConverter`, gerando um PDF temporário de uma página que
-é concatenado com os demais. Esse é exatamente o "pipeline de conversão
-intermediária" do item 13, e os arquivos intermediários ficam sob o
-controle do `temp_manager` (item 24), que os apaga ao final — tenha a
-junção dado certo ou errado.
+O que não é PDF não é página de PDF por si só, então cada arquivo passa
+antes pelo conversor da sua família — `ImageToPdfConverter` para
+imagens, `TextToPdfConverter` para .txt, `DocxToPdfConverter` para
+.docx —, gerando um PDF temporário que é concatenado com os demais.
+Esse é exatamente o "pipeline de conversão intermediária" do item 13, e
+os arquivos intermediários ficam sob o controle do `temp_manager`
+(item 24), que os apaga ao final — tenha a junção dado certo ou errado.
 
-Um único merger cobre PDF+PDF, imagens+imagens e a mistura dos dois. É
-proposital: dois mergers aceitando os mesmos formatos deixariam o
-registro de compatibilidade ambíguo, sem uma regra clara de qual dos
-dois deveria atender o pedido.
+Um único merger cobre todas as combinações. É proposital: dois mergers
+aceitando os mesmos formatos deixariam o registro de compatibilidade
+ambíguo, sem uma regra clara de qual dos dois deveria atender o pedido.
+Foi por isso que a Fase 7 ampliou este merger em vez de acrescentar um
+"merger de documentos" ao lado dele.
+
+O preço de aceitar documentos é que a lista de formatos de entrada deixa
+de ser fixa: ela depende do que esta máquina tem instalado. Um .docx só
+entra na junção se o LibreOffice estiver presente, porque é ele que
+transforma o documento em PDF (ver `document_converter.py`).
 """
 
 from __future__ import annotations
@@ -25,7 +33,13 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
+from app.converters.document_converter import (
+    PYMUPDF_AVAILABLE,
+    DocxToPdfConverter,
+    TextToPdfConverter,
+)
 from app.converters.pdf_converter import ImageToPdfConverter
+from app.core.converter import BaseConverter
 from app.core.merger import BaseMerger, MergeResult
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.file_utils import (
@@ -35,6 +49,7 @@ from app.utils.file_utils import (
     get_stem,
     temp_output_path,
 )
+from app.utils.libreoffice_manager import LibreOfficeManager, libreoffice_manager
 from app.utils.logger import get_logger
 from app.utils.temp_manager import temp_manager
 
@@ -54,18 +69,37 @@ class _MergeInputError(Exception):
     espalhar checagens de retorno pelo caminho."""
 
 
-# Formatos aceitos na entrada. As imagens entram pelo caminho da
+# Formatos aceitos na entrada. O que não é PDF entra pelo caminho da
 # conversão intermediária descrita no cabeçalho.
 IMAGE_FORMATS: set[str] = {"png", "jpg", "jpeg", "webp"}
-ACCEPTED_FORMATS: set[str] = {"pdf"} | IMAGE_FORMATS
 
 
 class PdfMerger(BaseMerger):
-    """Concatena PDFs e imagens em um único PDF, preservando a ordem."""
+    """Concatena PDFs, imagens e documentos em um único PDF, na ordem dada."""
+
+    def __init__(self, libreoffice: LibreOfficeManager | None = None) -> None:
+        # Quem converte cada extensão de entrada em PDF. O mapa é montado
+        # uma vez, na construção: é ele que define quais formatos o merger
+        # aceita, de modo que uma dependência ausente tira o formato da
+        # lista em vez de deixá-lo falhar no meio de uma junção.
+        #
+        # O gerenciador do LibreOffice é injetável pelo mesmo motivo que no
+        # `DocxToPdfConverter`: é o que permite testar a junção com .docx
+        # sem exigir o programa instalado na máquina que roda a suíte.
+        image_to_pdf = ImageToPdfConverter()
+        self._to_pdf: dict[str, BaseConverter] = {
+            ext: image_to_pdf for ext in IMAGE_FORMATS
+        }
+        if PYMUPDF_AVAILABLE:
+            self._to_pdf["txt"] = TextToPdfConverter()
+
+        office = libreoffice or libreoffice_manager
+        if office.is_available():
+            self._to_pdf["docx"] = DocxToPdfConverter(office)
 
     @property
     def accepted_formats(self) -> set[str]:
-        return set(ACCEPTED_FORMATS)
+        return {"pdf"} | set(self._to_pdf)
 
     @property
     def output_format(self) -> str:
@@ -151,13 +185,12 @@ class PdfMerger(BaseMerger):
     def _as_pdf_sources(
         self, input_paths: list[str], session_id: str, context: TaskContext
     ) -> list[Path]:
-        """Lista de PDFs a concatenar, na ordem recebida, convertendo as
-        imagens em PDFs temporários pelo caminho (item 13).
+        """Lista de PDFs a concatenar, na ordem recebida, convertendo o que
+        não é PDF em PDFs temporários pelo caminho (item 13).
 
         A preparação das entradas conta como a primeira metade do
         trabalho; a concatenação em si é a segunda.
         """
-        converter = ImageToPdfConverter()
         session_dir = temp_manager.session_dir(session_id)
         sources: list[Path] = []
         total = len(input_paths)
@@ -167,15 +200,23 @@ class PdfMerger(BaseMerger):
             context.check_cancelled()
             context.report_step(index, total * 2)
 
-            if get_extension(path) == "pdf":
+            extension = get_extension(path)
+            if extension == "pdf":
                 sources.append(Path(path))
                 continue
 
-            # O índice no nome evita colisão entre duas imagens de mesmo
-            # nome vindas de pastas diferentes.
+            converter = self._to_pdf.get(extension)
+            if converter is None:
+                raise _MergeInputError(
+                    f"O FileMorph não sabe transformar '{get_filename(path)}' "
+                    "em página de PDF nesta instalação."
+                )
+
+            # O índice no nome evita colisão entre dois arquivos de mesmo
+            # nome vindos de pastas diferentes.
             temp_pdf = session_dir / f"{index:04d}_{get_stem(path)}.pdf"
-            # O contexto vai sem progresso: o avanço da conversão de uma
-            # imagem isolada não pode reescrever o avanço da junção.
+            # O contexto vai sem progresso: o avanço da conversão de um
+            # arquivo isolado não pode reescrever o avanço da junção.
             result = converter.convert(path, str(temp_pdf), context.cancellation_only())
             if not result.success:
                 raise _MergeInputError(

@@ -23,15 +23,20 @@ quando existe de verdade no aplicativo:
 - ✅ **FASE 6 — áudio e vídeo** via FFmpeg: MP3, WAV, FLAC, OGG e M4A
   em qualquer combinação; MP4, MKV e WEBM entre si; e a extração da
   trilha sonora de um vídeo como arquivo de áudio.
-- ⏳ **FASE 7 em diante** (documentos, mascote animado, build do
-  executável) ainda **não foram implementadas**.
+- ✅ **FASE 7 — documentos**: DOCX, TXT e PDF entre si — extração de
+  texto, geração de documento e, com o LibreOffice instalado, DOCX em
+  PDF com o layout preservado. Documentos também entram no modo
+  "Juntar".
+- ⏳ **FASE 8 em diante** (mascote animado, planilhas) ainda **não foram
+  implementadas**.
 
 O princípio de projeto continua valendo: a interface só oferece
 operações que existem de fato — não há botões ou opções "decorativas"
-simulando funcionalidades inexistentes. Se você adicionar um DOCX, o
+simulando funcionalidades inexistentes. Se você adicionar um XLSX, o
 seletor de formato fica vazio e o botão principal desabilitado, porque
 ainda não existe conversor registrado para esse formato. O mesmo vale
-para um MP4 em uma máquina sem FFmpeg instalado.
+para um MP4 em uma máquina sem FFmpeg instalado, ou para a opção "PDF"
+de um DOCX em uma máquina sem LibreOffice.
 
 ### O que a Fase 3 já faz
 
@@ -137,20 +142,96 @@ Vale o aviso: converter vídeo é recodificar quadro a quadro, e leva na
 ordem de grandeza da duração do próprio vídeo — não os segundos de uma
 imagem. O WEBM é o mais demorado dos três.
 
+### O que a Fase 7 acrescentou
+
+Documentos: **DOCX, TXT e PDF** entre si, em cinco caminhos.
+
+- **DOCX → TXT** e **TXT → DOCX** (python-docx), sem depender de nada
+  externo. Tabelas do Word saem com as células separadas por tabulação,
+  e na posição certa do documento — parágrafos e tabelas são listas
+  separadas na biblioteca, e juntá-las sem cuidado mandaria todas as
+  tabelas para o fim do arquivo.
+- **TXT → PDF** (PyMuPDF): página A4, fonte monoespaçada, margem de
+  2 cm, quebra de linha automática e quantas páginas forem necessárias.
+- **PDF → TXT** (PyMuPDF), página por página.
+- **DOCX → PDF** (LibreOffice), preservando o layout.
+
+**O que se perde em cada direção**, porque é da natureza dos formatos e
+não uma limitação do FileMorph: ir para TXT guarda o texto e descarta o
+que não é texto (negrito, cores, imagens, cabeçalho) — um arquivo .txt
+não tem onde guardar isso. Vir de TXT produz um documento de formatação
+neutra, um parágrafo por linha, porque não há layout a adivinhar. Só o
+DOCX → PDF preserva a aparência, e é justamente o que precisa do
+LibreOffice.
+
+Dois detalhes que decidem se o resultado é utilizável:
+
+- **A codificação do .txt é descoberta por tentativa.** Um arquivo de
+  texto não declara em que codificação foi gravado, então o FileMorph
+  tenta UTF-8 (com e sem BOM) e depois a codificação histórica do
+  Windows em português, que é onde moram os .txt antigos com acento. Sem
+  isso, um arquivo do Bloco de Notas de dez anos atrás abriria com
+  caracteres trocados.
+- **A pontuação tipográfica é traduzida no TXT → PDF.** As fontes que
+  todo leitor de PDF já tem cobrem o português, mas não o travessão, as
+  aspas curvas, as reticências e o marcador de lista — cada um deles
+  viraria um quadradinho no PDF, e texto escrito em editor moderno é
+  cheio deles. Eles são convertidos para o equivalente em ASCII
+  (`—` → `--`, `“` → `"`), o que mantém o arquivo leve e legível; a
+  alternativa seria embutir uma fonte Unicode inteira no PDF.
+
+**Um PDF digitalizado não tem texto por dentro** — é a imagem de uma
+página. Extrair dele daria um arquivo vazio, então a conversão avisa
+que aquilo exigiria reconhecimento de texto (OCR), que o FileMorph não
+faz. A mesma ideia vale para um DOCX que só tem imagens.
+
+**Juntar também aceita documentos.** Um .txt e um .docx podem ser
+misturados a PDFs e imagens na mesma junção, e cada um é convertido para
+PDF antes de entrar no documento final — o mesmo pipeline intermediário
+que as imagens já usavam desde a Fase 4. O .docx só aparece nessa lista
+se o LibreOffice estiver instalado.
+
+**Sobre o LibreOffice.** É o segundo programa externo do projeto, depois
+do FFmpeg, e existe por um motivo só: um DOCX não é um arquivo de texto,
+é um pacote de XML com estilos, tabelas, imagens e quebras de página.
+Reimplementar esse layout em Python daria um PDF parecido com o
+documento em casos simples e bem diferente dele em qualquer documento
+real. Quem sabe paginar um DOCX é um processador de texto, então é um
+processador de texto que faz esse trabalho. Sem ele instalado, "PDF"
+simplesmente não aparece no seletor de formato para um DOCX, e as outras
+quatro conversões de documento continuam funcionando.
+
+Duas diferenças práticas em relação ao FFmpeg, ambas impostas pelo
+LibreOffice: ele **não publica andamento** (o `--convert-to` não diz
+nada até terminar), então a barra de progresso avança quando o arquivo
+termina, em vez de mostrar um percentual inventado — o botão Cancelar
+continua funcionando normalmente; e ele **aceita um pedido por perfil de
+usuário**, então o FileMorph cria um perfil próprio e serializa as
+conversões de DOCX, porque dois `soffice` no mesmo perfil terminam na
+hora sem converter nada.
+
 ## Requisitos
 
 - Windows 10/11 (desenvolvido e pensado para Windows, mas roda em
   qualquer SO com Python + PySide6 para fins de desenvolvimento).
 - Python 3.12+
-- PySide6 (interface), Pillow (imagens), pypdf (junção) e PyMuPDF
-  (leitura de PDF) — todos instalados pelo `requirements.txt`. Cada um
-  é verificado separadamente na inicialização: faltando um deles, o
+- PySide6 (interface), Pillow (imagens), pypdf (junção), PyMuPDF
+  (leitura de PDF e geração de PDF a partir de texto) e python-docx
+  (documentos do Word) — todos instalados pelo `requirements.txt`. Cada
+  um é verificado separadamente na inicialização: faltando um deles, o
   aplicativo abre normalmente e apenas as operações que dependiam
   daquela biblioteca deixam de ser oferecidas, com o motivo no log.
 - **FFmpeg** (opcional, para áudio e vídeo): não é um pacote pip. Baixe
   em [ffmpeg.org](https://ffmpeg.org), descompacte e adicione a pasta
   `bin` ao PATH do Windows. Sem ele o FileMorph funciona normalmente
-  para imagens e PDF.
+  para imagens, PDF e documentos.
+- **LibreOffice** (opcional, só para converter DOCX em PDF): também não
+  é um pacote pip. Instale de [libreoffice.org](https://libreoffice.org)
+  — o FileMorph o encontra sozinho, sem precisar mexer no PATH. Sem ele
+  as outras conversões de documento continuam disponíveis.
+
+O menu **"Verificar dependências"** mostra o estado dos dois programas
+externos e o que cada um habilita nesta máquina.
 
 ## Instalação (para usar o aplicativo)
 
@@ -227,8 +308,12 @@ e para depois do executável, que já pode ser zipado e enviado.
 
 Para instalar o Inno Setup: `winget install JRSoftware.InnoSetup`.
 
-O FFmpeg continua sendo dependência externa nos dois caminhos: sem ele,
-áudio e vídeo simplesmente não aparecem no seletor de formato.
+O FFmpeg e o LibreOffice continuam sendo dependências externas nos dois
+caminhos — eles não são embutidos no `setup.exe`, que ficaria com
+centenas de megabytes por causa de conversões que a maioria das pessoas
+não usa. Sem o FFmpeg, áudio e vídeo não aparecem no seletor de formato;
+sem o LibreOffice, "PDF" não aparece para um DOCX. Todo o resto funciona
+na máquina de destino sem instalar mais nada.
 
 ## Desinstalando
 
@@ -284,15 +369,17 @@ FileMorph/
 │   ├── core/                # lógica central: conversão, junção, fila,
 │   │                          validação — nada de UI aqui
 │   ├── converters/          # um módulo por família de formato:
-│   │                          image, pdf, audio e video implementados
-│   │                          (media_converter.py é a base comum dos
-│   │                          dois últimos); document e spreadsheet
-│   │                          ainda são stubs
+│   │                          image, pdf, audio, video e document
+│   │                          implementados (media_converter.py é a
+│   │                          base comum de áudio/vídeo, e
+│   │                          document_converter.py traz a sua);
+│   │                          spreadsheet ainda é um stub
 │   ├── mergers/             # um módulo por família de junção;
-│   │                          pdf_merger.py implementado
+│   │                          pdf_merger.py implementado (PDFs,
+│   │                          imagens e documentos em um único PDF)
 │   ├── ui/                  # janelas e widgets PySide6
 │   ├── utils/                # logging, arquivos temporários, ffmpeg,
-│   │                          utilitários de arquivo
+│   │                          libreoffice, utilitários de arquivo
 │   └── config/               # configurações persistidas do usuário
 └── assets/                  # ícone do app, mascote e os ícones de
                              # tipo de arquivo
@@ -307,16 +394,18 @@ A UI nunca conversa diretamente com Pillow/pypdf/FFmpeg etc. Ela passa
 por `app/core/processor.py`, que consulta a camada de compatibilidade
 (`app/core/converter.py` / `app/core/merger.py`) para saber o que é
 realmente possível, e delega a execução para o conversor/merger
-registrado. `app/utils/ffmpeg_manager.py` é o único lugar do projeto
-que cria um processo externo: é ele que detecta o FFmpeg, lista os
-codificadores disponíveis, lê o andamento da conversão e traduz um erro
-do FFmpeg em uma frase em português.
+registrado. Os dois únicos lugares do projeto que criam um processo
+externo são `app/utils/ffmpeg_manager.py` e
+`app/utils/libreoffice_manager.py`: cada um detecta o seu programa,
+executa a conversão, acompanha o que dá para acompanhar e traduz um erro
+técnico em uma frase em português. Nenhum conversor chama `subprocess`
+por conta própria.
 
 Quem preenche essa camada são `app/converters/__init__.py` e
 `app/mergers/__init__.py`, chamados uma única vez no `main.py`. Eles só
-registram um conversor/merger se a biblioteca dele estiver de fato
-instalada — é assim que a interface continua honesta em uma máquina sem
-Pillow ou sem PyMuPDF, por exemplo.
+registram um conversor/merger se a dependência dele estiver de fato
+presente — é assim que a interface continua honesta em uma máquina sem
+Pillow, sem PyMuPDF ou sem LibreOffice, por exemplo.
 
 ## Identidade visual e mascote
 
@@ -380,31 +469,38 @@ python -m pytest tests
 ```
 
 A suíte cobre a camada de compatibilidade, a validação de arquivos, a
-contabilidade da fila de tarefas, as conversões de imagem e de PDF, a
-junção, as conversões de áudio/vídeo e o progresso/cancelamento — tudo
-de verdade, gerando os arquivos na hora e conferindo o resultado
-(inclusive a ordem das páginas do PDF final e o fato de que cancelar
-não deixa sobras). Não depende de arquivos externos nem de rede.
+contabilidade da fila de tarefas, as conversões de imagem, de PDF e de
+documento, a junção, as conversões de áudio/vídeo e o
+progresso/cancelamento — tudo de verdade, gerando os arquivos na hora e
+conferindo o resultado (inclusive a ordem das páginas do PDF final, os
+acentos que sobrevivem a cada conversão e o fato de que cancelar não
+deixa sobras). Não depende de arquivos externos nem de rede.
 
-A única exceção é o FFmpeg, que não é uma biblioteca Python: exigi-lo
-instalado transformaria metade da suíte em "pulado" para quem só quer
-rodar os testes. No lugar dele entra `tests/fake_ffmpeg.py`, um
-programa que imita a parte do FFmpeg que o FileMorph usa de fato — ele
-responde a `-encoders`, publica blocos de progresso e grava o arquivo
-de saída. Assim o código exercitado é o de produção (leitura do
-andamento, encerramento do processo, tradução do erro, gravação
-atômica), e a única peça falsa é o binário do outro lado do cano.
+As exceções são os dois programas externos, que não são bibliotecas
+Python: exigi-los instalados transformaria metade da suíte em "pulado"
+para quem só quer rodar os testes. No lugar deles entram
+`tests/fake_ffmpeg.py` e `tests/fake_soffice.py`, programas que imitam a
+parte do FFmpeg e do LibreOffice que o FileMorph usa de fato — o
+primeiro responde a `-encoders`, publica blocos de progresso e grava o
+arquivo de saída; o segundo responde ao `--convert-to` gravando um PDF
+na pasta indicada, e sabe reproduzir o caso traiçoeiro em que o
+LibreOffice termina com sucesso sem ter gravado nada. Assim o código
+exercitado é o de produção (leitura do andamento, encerramento do
+processo, tradução do erro, gravação atômica), e a única peça falsa é o
+programa do outro lado do cano.
 
-## Próximos passos (Fase 7+)
+## Próximos passos (Fase 8+)
 
 Ver o prompt de desenvolvimento original para a ordem completa de
 implementação. Resumidamente:
 
-- **Fase 7 — documentos**: DOCX e TXT, possivelmente dependendo do
-  LibreOffice em modo headless, o segundo binário externo do projeto.
-- **Depois**: mascote animado e o build do executável.
+- **Mascote animado**, a última peça de interface planejada.
+- **Planilhas**: XLSX e CSV, com o openpyxl já listado nas dependências.
 - **Ainda em imagens**: BMP, TIFF e GIF, que ficaram fora da Fase 3 por
   exigirem tratamento próprio (paleta e animação).
 - **Ainda em mídia**: opções de qualidade escolhidas pelo usuário
   (hoje cada formato tem um perfil fixo, pensado para o uso comum) e
   corte por trecho.
+- **Ainda em documentos**: PDF → DOCX, que é o caminho mais difícil de
+  todos (reconstruir parágrafos e tabelas a partir de posições de texto
+  numa página), e ODT/RTF como origem, que o LibreOffice já saberia ler.

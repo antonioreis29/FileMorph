@@ -43,6 +43,7 @@ from app.ui.progress_widget import ProgressWidget
 from app.ui.settings_window import SettingsWindow
 from app.ui.styles import build_stylesheet, get_palette, resolve_theme_name
 from app.utils.ffmpeg_manager import ffmpeg_manager
+from app.utils.libreoffice_manager import libreoffice_manager
 from app.utils.file_utils import (
     ensure_directory,
     get_extension,
@@ -560,65 +561,87 @@ class MainWindow(QMainWindow):
         # Verificação leve o suficiente para não precisar de thread própria
         # aqui; caso vire uma operação mais pesada no futuro, deve passar
         # a rodar via TaskQueue para não travar a abertura da janela.
-        status = ffmpeg_manager.status()
-        if not status.available:
+        if not ffmpeg_manager.status().available:
             logger.info("FFmpeg não encontrado — conversões de áudio/vídeo ficarão indisponíveis.")
+        if not libreoffice_manager.status().available:
+            logger.info("LibreOffice não encontrado — DOCX para PDF ficará indisponível.")
 
     def _check_dependencies_dialog(self) -> None:
-        """Relata o estado real do FFmpeg — inclusive quando ele existe mas
-        o aplicativo ainda não o está usando.
+        """Relata o estado real dos dois programas externos do projeto.
 
-        Os conversores são registrados uma única vez, na inicialização
-        (ver `main.py`). Se o usuário instalar o FFmpeg com o FileMorph
-        aberto, esta janela vai encontrá-lo, mas o seletor de formato só
-        vai oferecer áudio e vídeo depois de reiniciar — e é isso que a
-        mensagem precisa dizer, em vez de deixar o usuário achando que
-        está tudo pronto.
+        Um aviso vale para os dois: os conversores são registrados uma
+        única vez, na inicialização (ver `main.py`). Se o usuário instalar
+        o FFmpeg ou o LibreOffice com o FileMorph aberto, esta janela vai
+        encontrá-lo, mas o seletor de formato só vai oferecer as novas
+        conversões depois de reiniciar — e é isso que a mensagem precisa
+        dizer, em vez de deixar o usuário achando que está tudo pronto.
         """
+        message = self._ffmpeg_report() + "\n\n" + self._libreoffice_report()
+        QMessageBox.information(self, "Dependências", message)
+
+    def _ffmpeg_report(self) -> str:
         status = ffmpeg_manager.status(force_refresh=True)
 
         if not status.available:
-            QMessageBox.information(
-                self,
-                "Dependências",
-                "FFmpeg não encontrado no sistema.\n\n"
-                "Sem ele, o FileMorph converte imagens e PDF normalmente, mas "
-                "áudio e vídeo não aparecem no seletor de formato.\n\n"
+            return (
+                "✗ FFmpeg não encontrado no sistema.\n"
+                "Sem ele, áudio e vídeo não aparecem no seletor de formato. "
                 "Para habilitá-los, baixe o FFmpeg em ffmpeg.org, descompacte "
-                "e adicione a pasta 'bin' ao PATH do Windows.",
+                "e adicione a pasta 'bin' ao PATH do Windows."
             )
-            return
 
         version = status.version or "desconhecida"
         audio_targets = compatibility_registry.available_targets_for("mp3")
         video_targets = compatibility_registry.available_targets_for("mp4")
 
         if not audio_targets and not video_targets:
-            message = (
-                f"✓ FFmpeg encontrado (versão {version}), mas ele ainda não está "
-                "em uso nesta sessão.\n\n"
-                "Feche e abra o FileMorph para habilitar as conversões de áudio "
-                "e vídeo."
-            )
-        else:
-            message = f"✓ FFmpeg encontrado (versão {version}).\n\n"
-            if audio_targets:
-                message += (
-                    "De um arquivo de áudio você pode gerar: "
-                    f"{self._format_list(audio_targets)}.\n"
-                )
-            if video_targets:
-                message += (
-                    "De um vídeo você pode gerar: "
-                    f"{self._format_list(video_targets)}.\n"
-                )
-            message += (
-                "\nOs formatos oferecidos dependem dos codificadores desta "
-                "instalação do FFmpeg — o que não aparece aqui é o que esta "
-                "compilação não sabe gravar."
+            return (
+                f"✓ FFmpeg encontrado (versão {version}), mas ele ainda não "
+                "está em uso nesta sessão.\n"
+                "Feche e abra o FileMorph para habilitar as conversões de "
+                "áudio e vídeo."
             )
 
-        QMessageBox.information(self, "Dependências", message)
+        report = f"✓ FFmpeg encontrado (versão {version}).\n"
+        if audio_targets:
+            report += (
+                "De um arquivo de áudio você pode gerar: "
+                f"{self._format_list(audio_targets)}.\n"
+            )
+        if video_targets:
+            report += f"De um vídeo você pode gerar: {self._format_list(video_targets)}.\n"
+        return report + (
+            "Os formatos oferecidos dependem dos codificadores desta "
+            "instalação do FFmpeg — o que não aparece aqui é o que esta "
+            "compilação não sabe gravar."
+        )
+
+    def _libreoffice_report(self) -> str:
+        status = libreoffice_manager.status(force_refresh=True)
+
+        if not status.available:
+            return (
+                "✗ LibreOffice não encontrado no sistema.\n"
+                "Ele é necessário apenas para converter DOCX em PDF, que é a "
+                "conversão que precisa paginar o documento. As demais "
+                "conversões de documento (DOCX em TXT, TXT em DOCX, TXT em PDF "
+                "e PDF em TXT) funcionam sem ele.\n"
+                "Para habilitá-la, instale o LibreOffice (libreoffice.org)."
+            )
+
+        version = status.version or "desconhecida"
+        if not compatibility_registry.can_convert("docx", "pdf"):
+            return (
+                f"✓ LibreOffice encontrado (versão {version}), mas ele ainda "
+                "não está em uso nesta sessão.\n"
+                "Feche e abra o FileMorph para habilitar a conversão de DOCX "
+                "em PDF."
+            )
+        return (
+            f"✓ LibreOffice encontrado (versão {version}).\n"
+            "Um DOCX pode virar PDF com o layout preservado, e também entra no "
+            "modo Juntar."
+        )
 
     @staticmethod
     def _format_list(extensions: set[str]) -> str:
@@ -643,19 +666,23 @@ class MainWindow(QMainWindow):
             "destino (ou o modo Juntar) e clique no botão principal.\n\n"
             "Esta versão converte imagens entre PNG, JPG e WEBP, transforma "
             "imagens em PDF e PDF em imagens, converte áudio entre MP3, WAV, "
-            "FLAC, OGG e M4A, converte vídeo entre MP4, MKV e WEBM e extrai a "
-            "trilha sonora de um vídeo como arquivo de áudio. Os arquivos "
-            "convertidos são salvos na pasta definida em Configurações, e o "
-            "original nunca é alterado.\n\n"
-            "No modo Juntar, vários PDFs e imagens viram um único PDF, na "
-            "ordem em que aparecem na lista.\n\n"
-            "Áudio e vídeo dependem do FFmpeg instalado no sistema: use "
-            "'Verificar dependências' no menu para ver o que está habilitado "
-            "nesta máquina. Converter vídeo é demorado — leva na ordem da "
-            "duração do próprio vídeo —, e o botão Cancelar interrompe a "
-            "conversão em andamento a qualquer momento.\n\n"
-            "Conversões de documentos chegam nas próximas atualizações — "
-            "enquanto não existirem, elas não aparecem no seletor de formato.",
+            "FLAC, OGG e M4A, converte vídeo entre MP4, MKV e WEBM, extrai a "
+            "trilha sonora de um vídeo como arquivo de áudio e converte "
+            "documentos entre DOCX, TXT e PDF. Os arquivos convertidos são "
+            "salvos na pasta definida em Configurações, e o original nunca é "
+            "alterado.\n\n"
+            "No modo Juntar, vários PDFs, imagens e documentos viram um único "
+            "PDF, na ordem em que aparecem na lista.\n\n"
+            "Ir para TXT guarda só o texto: negrito, imagens e layout não "
+            "couberam em um arquivo de texto, e isso vale para qualquer "
+            "programa. Um PDF digitalizado também não tem texto por dentro — é "
+            "a imagem de uma página —, e o FileMorph não faz reconhecimento de "
+            "texto.\n\n"
+            "Áudio e vídeo dependem do FFmpeg instalado no sistema, e DOCX → "
+            "PDF depende do LibreOffice: use 'Verificar dependências' no menu "
+            "para ver o que está habilitado nesta máquina. Converter vídeo é "
+            "demorado — leva na ordem da duração do próprio vídeo —, e o botão "
+            "Cancelar interrompe a conversão em andamento a qualquer momento.",
         )
 
     def _show_about(self) -> None:
@@ -663,7 +690,7 @@ class MainWindow(QMainWindow):
             self,
             "Sobre o FileMorph",
             "FileMorph — converta, transforme e junte arquivos localmente.\n\n"
-            "Versão em desenvolvimento (Fase 6: imagens PNG/JPG/WEBP, PDF, "
+            "Versão em desenvolvimento (Fase 7: imagens PNG/JPG/WEBP, PDF, "
             "junção em PDF, áudio MP3/WAV/FLAC/OGG/M4A e vídeo MP4/MKV/WEBM "
-            "via FFmpeg).",
+            "via FFmpeg, e documentos DOCX/TXT/PDF).",
         )
