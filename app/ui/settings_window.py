@@ -54,7 +54,7 @@ class SettingsWindow(QDialog):
         self._mascot_check.setChecked(settings.show_mascot_messages)
         form.addRow(self._mascot_check)
 
-        self._animations_check = QCheckBox("Animações")
+        self._animations_check = QCheckBox("Animar o mascote")
         self._animations_check.setChecked(settings.animations_enabled)
         form.addRow(self._animations_check)
 

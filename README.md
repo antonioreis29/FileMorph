@@ -27,8 +27,10 @@ quando existe de verdade no aplicativo:
   texto, geração de documento e, com o LibreOffice instalado, DOCX em
   PDF com o layout preservado. Documentos também entram no modo
   "Juntar".
-- ⏳ **FASE 8 em diante** (mascote animado, planilhas) ainda **não foram
-  implementadas**.
+- ✅ **FASE 8 — mascote animado**: o mascote reage ao que está
+  acontecendo (esperando, trabalhando, comemorando, errando), e as duas
+  opções de mascote das configurações passaram a funcionar de verdade.
+- ⏳ **FASE 9 em diante** (planilhas) ainda **não foi implementada**.
 
 O princípio de projeto continua valendo: a interface só oferece
 operações que existem de fato — não há botões ou opções "decorativas"
@@ -209,6 +211,50 @@ continua funcionando normalmente; e ele **aceita um pedido por perfil de
 usuário**, então o FileMorph cria um perfil próprio e serializa as
 conversões de DOCX, porque dois `soffice` no mesmo perfil terminam na
 hora sem converter nada.
+
+### O que a Fase 8 acrescentou
+
+O mascote deixou de ser uma figura parada e passou a **reagir ao que o
+aplicativo está fazendo**: ele respira devagar enquanto espera arquivos,
+fica mais desperto quando há algo na lista, se esmaga e balança enquanto
+converte, pula quando termina, faz "não" com o corpo quando dá erro e
+murcha quando o usuário cancela. Cada um desses momentos já existia no
+código — eram as falas dele —, e agora a fala e o movimento saem da
+mesma tabela, para não poderem discordar.
+
+**A animação é procedural, não são quadros desenhados.** Existe uma
+imagem só, sendo esticada e deslocada ao longo do tempo. A razão é a
+regra que já valia para a arte: qualquer PNG jogado em
+`assets/mascot/` funciona como mascote. Se a animação fossem quadros
+prontos, ela só funcionaria com a arte que veio no projeto, e a imagem
+de quem trocasse o mascote voltaria a ficar estática.
+
+O vocabulário é o de sempre em animação — **esmagar e esticar**. Dois
+detalhes fazem a diferença entre "massinha elástica" e "imagem sendo
+redimensionada":
+
+- **A área é conservada.** Encurtar 10% alarga 10%. Sem isso a figura
+  parece crescer e diminuir, em vez de se deformar.
+- **O desenho é ancorado na base.** O mascote se esmaga apoiado no chão,
+  como um corpo com peso, em vez de encolher no meio do ar.
+
+**Não há rotação em lugar nenhum**, e isso é deliberado: girar pixel art
+em um ângulo qualquer borra a borda dura de cada pixel, que é justamente
+o que dá o estilo. Balanço lateral comunica a mesma coisa sem esse custo.
+
+Se a imagem da pasta for um **GIF animado**, ele é reproduzido de
+verdade, quadro a quadro, e a pose continua sendo aplicada por cima — é
+ela que comunica o estado do aplicativo, coisa que um GIF pronto não tem
+como saber.
+
+**As duas opções do mascote agora funcionam.** "Mostrar mensagens do
+mascote" e "Animar o mascote" existiam na janela de configurações desde a
+Fase 1 sem fazer efeito nenhum — controle decorativo, exatamente o que o
+projeto diz não fazer. Desligar as mensagens esconde a fala; desligar a
+animação deixa o mascote parado na pose neutra e desliga o temporizador,
+que também é o que se deve a quem prefere uma interface sem movimento. O
+temporizador também para sozinho quando a janela é escondida: não faz
+sentido desenhar quadros que ninguém vê.
 
 ## Requisitos
 
@@ -433,9 +479,11 @@ quebra o contorno, porque detalhe de um pixel não sobrevive à divisão.
 **Trocando o mascote.** Nada disso é obrigatório. A janela usa
 `assets/mascot/ditto.png` e, se ele não existir, a primeira imagem que
 encontrar na pasta — então jogar um PNG ali dentro já funciona, com o
-nome que for. O ícone do atalho é o que estiver em
-`assets/icons/filemorph.ico`. Se a imagem sumir, o aplicativo abre
-normalmente, apenas sem a figura.
+nome que for, **e a animação da Fase 8 funciona com ele igual**, porque
+ela deforma a imagem em vez de depender de quadros desenhados. Um GIF
+animado também serve, e nesse caso os quadros dele são reproduzidos. O
+ícone do atalho é o que estiver em `assets/icons/filemorph.ico`. Se a
+imagem sumir, o aplicativo abre normalmente, apenas sem a figura.
 
 Vale passar a imagem pelo preparador antes:
 
@@ -476,6 +524,14 @@ conferindo o resultado (inclusive a ordem das páginas do PDF final, os
 acentos que sobrevivem a cada conversão e o fato de que cancelar não
 deixa sobras). Não depende de arquivos externos nem de rede.
 
+A animação do mascote também é testada, apesar de o resultado dela ser
+visual: a parte que decide *como* ele se move é função pura
+(`pose_for`), então os testes verificam as invariantes que o olho só
+notaria por acidente — que o movimento conserva a área da figura, que
+ele cabe na folga que o widget reserva (senão o mascote aparece cortado
+no ponto mais alto de um pulo) e que toda reação termina devolvendo o
+mascote ao repouso. Nada disso abre janela.
+
 As exceções são os dois programas externos, que não são bibliotecas
 Python: exigi-los instalados transformaria metade da suíte em "pulado"
 para quem só quer rodar os testes. No lugar deles entram
@@ -489,12 +545,12 @@ exercitado é o de produção (leitura do andamento, encerramento do
 processo, tradução do erro, gravação atômica), e a única peça falsa é o
 programa do outro lado do cano.
 
-## Próximos passos (Fase 8+)
+## Próximos passos (Fase 9+)
 
-Ver o prompt de desenvolvimento original para a ordem completa de
-implementação. Resumidamente:
+Com o mascote animado, todas as fases do roteiro original estão
+entregues — o que vem daqui para frente é ampliação, não plano
+pendente. Resumidamente:
 
-- **Mascote animado**, a última peça de interface planejada.
 - **Planilhas**: XLSX e CSV, com o openpyxl já listado nas dependências.
 - **Ainda em imagens**: BMP, TIFF e GIF, que ficaram fora da Fase 3 por
   exigirem tratamento próprio (paleta e animação).

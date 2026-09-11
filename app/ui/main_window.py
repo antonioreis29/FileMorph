@@ -39,6 +39,7 @@ from app.core.task_queue import TaskQueue
 from app.ui.file_drop_area import FileDropArea
 from app.ui.file_list import FileListWidget, FileStatus
 from app.ui.format_selector import FormatSelector
+from app.ui.mascot import MascotState, duration_of
 from app.ui.progress_widget import ProgressWidget
 from app.ui.settings_window import SettingsWindow
 from app.ui.styles import build_stylesheet, get_palette, resolve_theme_name
@@ -56,15 +57,18 @@ from app.utils.resources import ICON_PATH, get_asset
 
 logger = get_logger("ui.main_window")
 
-_MASCOT_MESSAGES = {
-    "idle": "Jogue seus arquivos aqui! 📥",
-    "files_added": "Boa! Agora escolha o que fazer com eles.",
-    "processing": "Só um segundo...",
-    "done": "Prontinho! ✨",
-    "partial": "Terminei, mas alguns arquivos deram problema.",
-    "error": "Ops! Esse arquivo deu problema.",
-    "cancelled": "Tudo bem, parei por aqui.",
-    "not_available": "Essa conversão ainda não existe nesta versão — em breve!",
+# Cada momento do aplicativo tem uma fala e uma reação do mascote, e as
+# duas ficam na mesma tabela para não poderem divergir: acrescentar um
+# momento aqui obriga a decidir as duas coisas de uma vez. Antes da
+# Fase 8 esta tabela só tinha o texto, e a figura era uma imagem parada.
+_MASCOT_MOMENTS: dict[str, tuple[str, MascotState]] = {
+    "idle": ("Jogue seus arquivos aqui! 📥", MascotState.IDLE),
+    "files_added": ("Boa! Agora escolha o que fazer com eles.", MascotState.READY),
+    "processing": ("Só um segundo...", MascotState.WORKING),
+    "done": ("Prontinho! ✨", MascotState.HAPPY),
+    "partial": ("Terminei, mas alguns arquivos deram problema.", MascotState.SAD),
+    "error": ("Ops! Esse arquivo deu problema.", MascotState.SAD),
+    "cancelled": ("Tudo bem, parei por aqui.", MascotState.CANCELLED),
 }
 
 
@@ -115,6 +119,8 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._apply_theme()
+        self._apply_mascot_settings()
+        self._say("idle")
         self._check_dependencies_async()
 
     # --- Construção da UI ------------------------------------------------
@@ -163,7 +169,7 @@ class MainWindow(QMainWindow):
         # arrastar (ver app/ui/file_drop_area.py), que e onde ela recebe
         # quem chega - repeti-la aqui seria mostrar o mesmo desenho duas
         # vezes na mesma tela.
-        self._mascot_label = QLabel(_MASCOT_MESSAGES["idle"])
+        self._mascot_label = QLabel()
         self._mascot_label.setObjectName("mascotLabel")
         self._mascot_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         root.addWidget(self._mascot_label)
@@ -225,12 +231,44 @@ class MainWindow(QMainWindow):
         palette = get_palette(theme_name)
         self.setStyleSheet(build_stylesheet(palette))
 
+    # --- Mascote -----------------------------------------------------------
+
+    def _say(self, moment: str) -> None:
+        """Faz o mascote falar e reagir ao que acabou de acontecer.
+
+        Uma reação (comemorar, levar um susto) termina e devolve o
+        mascote ao estado de repouso. Qual é esse repouso depende da
+        lista de arquivos *agora* — não do que estava acontecendo antes
+        —, e é por isso que ele é reafirmado antes da reação: sem isso,
+        depois de comemorar o fim de uma conversão o mascote voltaria a
+        se mexer como se ainda estivesse trabalhando.
+        """
+        text, state = _MASCOT_MOMENTS[moment]
+        self._mascot_label.setText(text)
+        if duration_of(state) is not None:
+            self._drop_area.set_mascot_state(self._resting_state())
+        self._drop_area.set_mascot_state(state)
+
+    def _resting_state(self) -> MascotState:
+        return MascotState.IDLE if self._file_list.is_empty() else MascotState.READY
+
+    def _apply_mascot_settings(self) -> None:
+        """Aplica as duas opções do mascote — a fala e o movimento.
+
+        As duas existiam nas configurações desde a Fase 1 sem fazer
+        efeito nenhum, o que contraria o princípio do projeto de não ter
+        controle decorativo. A Fase 8 as ligou de verdade.
+        """
+        settings = settings_manager.settings
+        self._mascot_label.setVisible(settings.show_mascot_messages)
+        self._drop_area.set_mascot_animated(settings.animations_enabled)
+
     # --- Eventos de arquivos ---------------------------------------------
 
     def _on_files_dropped(self, valid: list[str], invalid: list[str]) -> None:
         added = self._file_list.add_files(valid)
         if added:
-            self._mascot_label.setText(_MASCOT_MESSAGES["files_added"])
+            self._say("files_added")
         if invalid:
             names = "\n".join(invalid[:10])
             more = "" if len(invalid) <= 10 else f"\n... e mais {len(invalid) - 10} arquivo(s)"
@@ -245,7 +283,7 @@ class MainWindow(QMainWindow):
         self._format_selector.refresh(source_exts)
         self._update_primary_button()
         if self._file_list.is_empty():
-            self._mascot_label.setText(_MASCOT_MESSAGES["idle"])
+            self._say("idle")
 
     def _on_mode_changed(self) -> None:
         self._mode = "convert" if self._convert_button.isChecked() else "merge"
@@ -405,7 +443,7 @@ class MainWindow(QMainWindow):
             self._file_list.set_status(path, FileStatus.WAITING)
 
         self._primary_button.setEnabled(False)
-        self._mascot_label.setText(_MASCOT_MESSAGES["processing"])
+        self._say("processing")
         self._progress_widget.start(self._batch_total)
 
     def _on_cancel_requested(self) -> None:
@@ -513,7 +551,7 @@ class MainWindow(QMainWindow):
         self._update_primary_button()
 
         if cancelled:
-            self._mascot_label.setText(_MASCOT_MESSAGES["cancelled"])
+            self._say("cancelled")
             QMessageBox.information(
                 self,
                 "Operação cancelada",
@@ -523,9 +561,7 @@ class MainWindow(QMainWindow):
             return
 
         if failed:
-            self._mascot_label.setText(
-                _MASCOT_MESSAGES["partial"] if succeeded else _MASCOT_MESSAGES["error"]
-            )
+            self._say("partial" if succeeded else "error")
             details = "\n".join(f"• {get_filename(p)}: {msg}" for p, msg in failed[:8])
             if len(failed) > 8:
                 details += f"\n... e mais {len(failed) - 8} arquivo(s)"
@@ -535,7 +571,7 @@ class MainWindow(QMainWindow):
                 f"{succeeded} arquivo(s) concluído(s), {len(failed)} com erro:\n\n{details}",
             )
         else:
-            self._mascot_label.setText(_MASCOT_MESSAGES["done"])
+            self._say("done")
             if merge_output:
                 summary = f"{succeeded} arquivo(s) unido(s) em:\n{merge_output}"
             else:
@@ -654,6 +690,7 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self._task_queue.set_max_concurrent(settings_manager.settings.max_concurrent_tasks)
             self._apply_theme()
+            self._apply_mascot_settings()
 
     def _open_logs_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(get_logs_dir())))
@@ -690,7 +727,7 @@ class MainWindow(QMainWindow):
             self,
             "Sobre o FileMorph",
             "FileMorph — converta, transforme e junte arquivos localmente.\n\n"
-            "Versão em desenvolvimento (Fase 7: imagens PNG/JPG/WEBP, PDF, "
+            "Versão em desenvolvimento (Fase 8: imagens PNG/JPG/WEBP, PDF, "
             "junção em PDF, áudio MP3/WAV/FLAC/OGG/M4A e vídeo MP4/MKV/WEBM "
-            "via FFmpeg, e documentos DOCX/TXT/PDF).",
+            "via FFmpeg, documentos DOCX/TXT/PDF e o mascote animado).",
         )

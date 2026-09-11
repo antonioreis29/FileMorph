@@ -13,12 +13,13 @@ from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QMouseEv
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QVBoxLayout,
 )
 
 from app.core.file_validator import validate_paths
-from app.ui.mascot import load_mascot_pixmap
+from app.ui.mascot import MascotState, MascotWidget
 
 # Altura do mascote dentro da area de arrastar.
 MASCOT_HEIGHT = 76
@@ -45,15 +46,19 @@ class FileDropArea(QFrame):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        # O mascote recebe quem chega. Sem imagem, o rotulo some e o
+        # O mascote recebe quem chega. Sem imagem, ele se esconde e o
         # texto sobe - a area continua funcionando igual.
-        self._mascot_label = QLabel()
-        self._mascot_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        sprite = load_mascot_pixmap(MASCOT_HEIGHT)
-        if sprite is None:
-            self._mascot_label.hide()
-        else:
-            self._mascot_label.setPixmap(sprite)
+        #
+        # O widget tem largura fixa (precisa de folga para o mascote
+        # pular e balancar sem ser cortado), e um QWidget de tamanho fixo
+        # dentro de um layout vertical ficaria encostado a esquerda. A
+        # linha horizontal com esticadores dos dois lados e o que o
+        # mantem centralizado.
+        self._mascot = MascotWidget(MASCOT_HEIGHT)
+        mascot_row = QHBoxLayout()
+        mascot_row.addStretch()
+        mascot_row.addWidget(self._mascot)
+        mascot_row.addStretch()
 
         self._main_label = QLabel("Arraste seus arquivos aqui")
         self._main_label.setObjectName("dropTitle")
@@ -64,10 +69,24 @@ class FileDropArea(QFrame):
         self._hint_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         layout.addStretch()
-        layout.addWidget(self._mascot_label)
+        layout.addLayout(mascot_row)
         layout.addWidget(self._main_label)
         layout.addWidget(self._hint_label)
         layout.addStretch()
+
+    # --- Mascote ---------------------------------------------------------
+
+    def set_mascot_state(self, state: MascotState) -> None:
+        """Repassa o estado para o mascote.
+
+        A area de arrastar e quem abriga a figura, mas quem sabe o que
+        esta acontecendo com os arquivos e a janela principal - daqui so
+        passa o recado.
+        """
+        self._mascot.set_state(state)
+
+    def set_mascot_animated(self, animated: bool) -> None:
+        self._mascot.set_animated(animated)
 
     # --- Drag and drop -----------------------------------------------
 
