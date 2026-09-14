@@ -1,17 +1,19 @@
 """
-Fila de tarefas assíncrona (item 15 do briefing).
+Fila de tarefas assíncrona.
 
-Usa QThreadPool + QRunnable (item 15 sugere QThread/QThreadPool/
-QRunnable) para que a interface nunca trave durante o processamento
-(item 16/32). Cada tarefa é uma chamada `callable(context, *args)`
+É a implementação que o aplicativo usa do `TaskQueueProtocol`
+(`app/core/task_runner.py`): o `FileProcessor` só conhece o protocolo, e é
+por isso que as regras de negócio podem ser testadas sem carregar o Qt.
+
+Usa QThreadPool + QRunnable para que a interface nunca trave durante o
+processamento. Cada tarefa é uma chamada `callable(context, *args)`
 executada em background; o resultado (ou erro) chega de volta à
 thread principal via sinais Qt, que são thread-safe por natureza.
 
-A partir da Fase 3 a fila carrega conversões de verdade: cada arquivo
-do lote vira uma tarefa independente, de modo que uma falha isolada
-não interrompe as demais (item 11).
+Cada arquivo de uma conversão em lote vira uma tarefa independente, de
+modo que uma falha isolada não interrompe as demais.
 
-Na Fase 5 a fila passou a entregar um `TaskContext` (ver
+A fila entrega um `TaskContext` (ver
 app/core/task_context.py) como primeiro argumento de toda tarefa. É
 por ele que uma conversão longa informa o andamento e descobre que o
 usuário pediu para parar — o que faz o cancelamento valer também para
@@ -68,7 +70,7 @@ class _Task(QRunnable):
         já estiver em execução, a própria `func` enxerga o pedido pelo
         contexto e para no próximo ponto seguro — entre duas páginas de
         um PDF, entre dois arquivos de uma junção —, nunca no meio de
-        uma gravação (item 17).
+        uma gravação.
         """
         self._cancelled = True
 
@@ -91,7 +93,7 @@ class _Task(QRunnable):
             self.signals.cancelled.emit(self.task_id)
         except Exception as exc:  # noqa: BLE001 — precisa capturar tudo
             # Nunca deixamos uma exceção de tarefa de background propagar
-            # e derrubar a aplicação (item 22/30). O traceback completo
+            # e derrubar a aplicação. O traceback completo
             # vai para o log; a UI recebe só a mensagem.
             from app.utils.logger import get_logger
 
@@ -105,7 +107,7 @@ class TaskQueue(QObject):
     """Fila de tarefas com paralelismo configurável.
 
     O número máximo de tarefas simultâneas é controlado pelo usuário
-    nas configurações (item 26 — "Processos simultâneos"), não é fixo.
+    nas configurações ("Processos simultâneos"), não é fixo.
     """
 
     task_started = Signal(str)
@@ -143,14 +145,14 @@ class TaskQueue(QObject):
         self._pool.start(task)
 
     def cancel(self, task_id: str) -> None:
-        """Cancela uma tarefa específica (item 17: "tentar cancelar a
-        tarefa atual quando possível")."""
+        """Cancela uma tarefa específica, inclusive a que já está rodando
+        (ela para no próximo ponto seguro)."""
         task = self._active_tasks.get(task_id)
         if task:
             task.cancel()
 
     def cancel_all(self) -> None:
-        """Cancela o lote inteiro (item 17).
+        """Cancela o lote inteiro.
 
         As tarefas que ainda não começaram nem chegam a rodar; a que já
         está em execução para no próximo ponto seguro do seu próprio

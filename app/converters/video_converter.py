@@ -1,5 +1,5 @@
 """
-Conversores de vídeo baseados em FFmpeg (FASE 6 do briefing).
+Conversores de vídeo baseados em FFmpeg.
 
 Duas operações, cada uma em sua classe, porque são coisas diferentes
 para quem usa o aplicativo:
@@ -19,8 +19,8 @@ escolha do usuário no seletor decide qual dos dois roda.
 
 Sobre tempo de conversão: converter vídeo é recodificar quadro a
 quadro, e leva na ordem de grandeza da duração do próprio vídeo — não
-dos segundos que uma imagem leva. É justamente por isso que a Fase 6
-depende do progresso contínuo e do cancelamento da Fase 5: um vídeo
+dos segundos que uma imagem leva. É justamente por isso que a conversão
+de vídeo depende do progresso contínuo e do cancelamento: um vídeo
 longo precisa mostrar que está andando, e precisa poder ser
 interrompido.
 """

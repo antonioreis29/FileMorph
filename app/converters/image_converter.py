@@ -1,21 +1,19 @@
 """
-Conversor de imagens baseado em Pillow (FASE 3 do briefing).
+Conversor de imagens baseado em Pillow.
 
-Este é o primeiro conversor *real* do FileMorph. Ele implementa a
-interface `BaseConverter` (app/core/converter.py) e é registrado na
-camada de compatibilidade por `app.converters.register_builtin_converters`,
-o que faz o seletor de formato da interface passar a oferecer opções
-verdadeiras para arquivos de imagem (itens 10 e 14).
+Implementa a interface `BaseConverter` (app/core/converter.py) e é
+registrado na camada de compatibilidade por
+`app.converters.register_builtin_converters`, o que faz o seletor de
+formato da interface oferecer opções verdadeiras para arquivos de imagem.
 
-Escopo desta fase, conforme o plano de desenvolvimento: PNG, JPG/JPEG
-e WEBP em qualquer combinação. BMP, TIFF e GIF ficam para o próximo
-incremento — enquanto não estiverem implementados e testados aqui, a
-interface continua não oferecendo essas conversões, em vez de fingir
-que elas existem (item 37).
+Formatos: PNG, JPG/JPEG e WEBP, em qualquer combinação. BMP, TIFF e GIF
+são reconhecidos pelo aplicativo mas ainda não têm conversão — enquanto
+não estiverem implementados e testados aqui, a interface não oferece
+essas conversões, em vez de fingir que elas existem.
 
 Cuidados que este módulo garante:
 
-- O arquivo de origem nunca é modificado nem apagado (item 18): ele é
+- O arquivo de origem nunca é modificado nem apagado: ele é
   aberto somente para leitura.
 - A gravação é atômica: a imagem é escrita em um arquivo temporário na
   pasta de destino e só depois movida para o nome final. Assim, uma
@@ -23,7 +21,7 @@ Cuidados que este módulo garante:
   nem destrói um arquivo que já existisse com aquele nome.
 - Nenhuma exceção escapa para a interface: qualquer erro vira um
   `ConversionResult(success=False)` com mensagem em português, e o
-  traceback completo vai para o log (itens 22 e 23).
+  traceback completo vai para o log.
 """
 
 from __future__ import annotations
@@ -31,9 +29,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
-from app.core.converter import BaseConverter, ConversionResult
+from app.core.converter import BaseConverter, ConversionResult, refuse_overwriting_source
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.file_utils import (
     ensure_directory,
@@ -45,7 +43,7 @@ from app.utils.logger import get_logger
 
 logger = get_logger("converters.image")
 
-# Formatos cobertos pela Fase 3. As duas listas ficam separadas porque
+# Formatos de imagem cobertos. As duas listas ficam separadas porque
 # nem tudo que sabemos ler é oferecido como destino.
 SOURCE_FORMATS: set[str] = {"png", "jpg", "jpeg", "webp"}
 
@@ -113,9 +111,9 @@ def flatten_onto_background(image: Image.Image) -> Image.Image:
 def _prepare_image(image: Image.Image, target_ext: str) -> Image.Image:
     """Ajusta orientação e modo de cor da imagem para o formato de destino."""
     # Fotos de celular costumam vir "deitadas", com a rotação correta
-    # apenas na tag EXIF. PNG e WEBP não carregam essa tag da mesma
-    # forma, então a rotação é aplicada aos pixels (e o Pillow remove a
-    # tag de orientação, evitando rotação dupla em quem lê o EXIF).
+    # apenas na tag EXIF. A rotação é aplicada aos pixels aqui, e é por
+    # isso que a tag precisa sair do EXIF gravado (ver
+    # `exif_without_orientation`).
     image = ImageOps.exif_transpose(image) or image
 
     if target_ext in _FORMATS_WITHOUT_ALPHA and has_alpha(image):
@@ -127,10 +125,70 @@ def _prepare_image(image: Image.Image, target_ext: str) -> Image.Image:
     return image.convert("RGBA" if has_alpha(image) else "RGB")
 
 
-def save_options(image: Image.Image, target_ext: str) -> dict:
+# Espaço de cor de cada modo do Pillow, para saber se um perfil ICC ainda
+# descreve a imagem depois da conversão de modo. Um modo fora da tabela só
+# combina com ele mesmo.
+_COLOR_SPACE_BY_MODE: dict[str, str] = {
+    "1": "gray",
+    "L": "gray",
+    "LA": "gray",
+    "I": "gray",
+    "I;16": "gray",
+    "F": "gray",
+    "P": "rgb",
+    "PA": "rgb",
+    "RGB": "rgb",
+    "RGBA": "rgb",
+    "RGBX": "rgb",
+    "CMYK": "cmyk",
+}
+
+
+def exif_without_orientation(image: Image.Image) -> bytes | None:
+    """O EXIF da imagem, sem a tag de orientação, pronto para gravar.
+
+    Quando a rotação da tag já foi aplicada aos pixels, repassar o EXIF
+    original deixaria no arquivo novo uma imagem de pé *e* uma tag dizendo
+    "gire 90°" — e todo visualizador que respeita a tag (o do Windows, o
+    do celular, o navegador) giraria de novo. A tag sai; o resto fica:
+    data, câmera, GPS, que é o que faz a foto continuar sendo aquela foto.
+
+    Os blocos internos do EXIF (o de dados da câmera e o de GPS) são lidos
+    antes de regravar, para irem junto.
+    """
+    if not image.info.get("exif"):
+        return None
+    exif = image.getexif()
+    for ifd in (ExifTags.IFD.Exif, ExifTags.IFD.GPSInfo):
+        if ifd in exif:
+            exif.get_ifd(ifd)
+    exif.pop(ExifTags.Base.Orientation, None)
+    return exif.tobytes()
+
+
+def _icc_matches(source_mode: str, target_mode: str) -> bool:
+    """True se um perfil de cor da origem ainda serve para a imagem gravada.
+
+    Um perfil CMYK anexado a um PNG que virou RGB — ou um perfil de cinza a
+    um WEBP colorido — descreveria cores que a imagem não tem, e o
+    visualizador as mostraria erradas. Melhor gravar sem perfil nesse caso.
+    """
+    return _COLOR_SPACE_BY_MODE.get(source_mode, source_mode) == _COLOR_SPACE_BY_MODE.get(
+        target_mode, target_mode
+    )
+
+
+def save_options(
+    image: Image.Image, target_ext: str, source: Image.Image | None = None
+) -> dict:
     """Parâmetros de gravação por formato, incluindo os metadados que
-    vale a pena preservar (EXIF e perfil de cor ICC)."""
+    vale a pena preservar (EXIF e perfil de cor ICC).
+
+    `image` é a imagem que vai ser gravada; `source`, a imagem de onde ela
+    saiu, quando são diferentes — é da origem que vêm os metadados.
+    """
     options: dict = {}
+    source = source if source is not None else image
 
     if target_ext in ("jpg", "jpeg"):
         options.update(quality=JPEG_QUALITY, optimize=True, progressive=True)
@@ -139,15 +197,19 @@ def save_options(image: Image.Image, target_ext: str) -> dict:
     elif target_ext == "png":
         options.update(optimize=True)
 
-    # A orientação já foi aplicada aos pixels por `_prepare_image`, então
-    # o EXIF restante (data, câmera, GPS) pode ser repassado sem risco.
-    exif = image.info.get("exif")
-    if exif and target_ext in ("jpg", "jpeg", "webp"):
-        options["exif"] = exif
+    if target_ext in ("jpg", "jpeg", "webp"):
+        exif = exif_without_orientation(source)
+        if exif:
+            options["exif"] = exif
 
-    icc_profile = image.info.get("icc_profile")
-    if icc_profile:
+    icc_profile = source.info.get("icc_profile")
+    if icc_profile and _icc_matches(source.mode, image.mode):
         options["icc_profile"] = icc_profile
+    elif icc_profile:
+        # Explícito, e não só ausente: a conversão de modo copia o `info` da
+        # origem, e o gravador de PNG usa o perfil de lá quando a opção não
+        # é passada.
+        options["icc_profile"] = None
 
     return options
 
@@ -157,7 +219,7 @@ class ImageConverter(BaseConverter):
 
     A interface não sabe (nem precisa saber) que existe Pillow por trás
     disso — ela apenas pede "converta este arquivo para .webp" através
-    do `FileProcessor` (item 4).
+    do `FileProcessor`.
     """
 
     @property
@@ -187,6 +249,9 @@ class ImageConverter(BaseConverter):
             return self._failure(
                 input_path, f"O arquivo '{get_filename(source)}' não foi encontrado."
             )
+        refused = refuse_overwriting_source(input_path, output_path)
+        if refused is not None:
+            return refused
 
         temp_output: Path | None = None
         try:
@@ -205,7 +270,7 @@ class ImageConverter(BaseConverter):
                 prepared.save(
                     temp_output,
                     format=PILLOW_FORMAT[target_ext],
-                    **save_options(image, target_ext),
+                    **save_options(prepared, target_ext, source=image),
                 )
 
             temp_output.replace(destination)

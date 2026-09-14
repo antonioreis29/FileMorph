@@ -1,5 +1,5 @@
 """
-Um FFmpeg de mentira, usado pelos testes da Fase 6.
+Um FFmpeg de mentira, usado pelos testes de áudio e vídeo.
 
 A suíte do FileMorph não pode exigir um FFmpeg instalado na máquina que
 a roda — mas também não faz sentido testar o conversor de áudio/vídeo

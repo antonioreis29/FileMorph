@@ -1,5 +1,5 @@
 """
-Base comum dos conversores que rodam sobre o FFmpeg (FASE 6).
+Base comum dos conversores que rodam sobre o FFmpeg.
 
 Áudio e vídeo são famílias diferentes para o usuário, mas por dentro a
 conversão é o mesmo roteiro: descobrir a duração, montar a linha de
@@ -17,11 +17,11 @@ O que um perfil descreve (`MediaProfile`):
   distribuição enxuta muitas vezes não. Em vez de deixar o usuário
   descobrir isso quando a conversão falha, o conversor pergunta ao
   `FFmpegManager` o que existe nesta máquina e só oferece o que puder
-  mesmo cumprir (item 37).
+  mesmo cumprir.
 
 Garantias que valem para todos os conversores de mídia:
 
-- O arquivo de origem nunca é modificado nem apagado (item 18): o
+- O arquivo de origem nunca é modificado nem apagado: o
   FFmpeg só o abre para leitura.
 - A gravação é atômica: a saída vai para um temporário ao lado do
   destino e só depois é movida para o nome final. Uma falha (ou um
@@ -29,7 +29,7 @@ Garantias que valem para todos os conversores de mídia:
   nem destrói um arquivo bom que já ocupasse aquele nome.
 - Nenhuma exceção escapa para a interface: qualquer erro vira um
   `ConversionResult(success=False)` com mensagem em português, e o
-  relatório técnico do FFmpeg vai para o log (itens 22 e 23).
+  relatório técnico do FFmpeg vai para o log.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.core.converter import BaseConverter, ConversionResult
+from app.core.converter import BaseConverter, ConversionResult, refuse_overwriting_source
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.ffmpeg_manager import FFmpegError, FFmpegManager, ffmpeg_manager
 from app.utils.file_utils import (
@@ -151,6 +151,9 @@ class MediaConverter(BaseConverter):
             return self._failure(
                 input_path, f"O arquivo '{get_filename(source)}' não foi encontrado."
             )
+        refused = refuse_overwriting_source(input_path, output_path)
+        if refused is not None:
+            return refused
 
         temp_output: Path | None = None
         try:

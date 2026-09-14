@@ -3,12 +3,14 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
+.pytest_cache/
 build/
 dist/
 *.spec
-# ...menos a receita de empacotamento do projeto, que e versionada de
-# proposito: ela e a configuracao do instalador, nao um arquivo gerado.
+# ...menos as receitas de empacotamento do projeto, que são versionadas de
+# propósito: elas são a configuração do instalador, não arquivos gerados.
 !FileMorph.spec
+!FileMorph-portable.spec
 
 # Ambientes virtuais
 .venv/
@@ -31,3 +33,9 @@ Thumbs.db
 
 # Arquivos temporários do FileMorph
 .filemorph_tmp/
+*.filemorph-tmp*
+
+# FFmpeg distribuído junto (ver vendor/ffmpeg/LEIA-ME.md): os executáveis e
+# a licença do build escolhido não são versionados, só as instruções.
+vendor/ffmpeg/*
+!vendor/ffmpeg/LEIA-ME.md

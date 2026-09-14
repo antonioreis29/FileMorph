@@ -44,11 +44,12 @@ logger = get_logger("ui.file_icons")
 # `app/utils/resources.py`.
 FILETYPES_DIR = ("icons", "filetypes")
 
-# Altura do ícone em pixels lógicos. Acompanha a altura da linha do
-# card: grande o bastante para a arte ser reconhecível, pequeno o
-# bastante para não empurrar o nome do arquivo. A largura sai da
+# Altura do ícone em pixels lógicos. Acompanha a altura do bloco de
+# texto do card, que desde o refino do visual tem duas linhas (nome em
+# cima, tipo e tamanho embaixo): um ícone de 24 px ficava pequeno ao
+# lado delas e a arte da folha virava um borrão. A largura sai da
 # proporção da própria imagem, que não precisa ser quadrada.
-ICON_SIZE = 24
+ICON_SIZE = 30
 
 # Em que ordem procurar a arte de uma extensão. O PNG vem primeiro para
 # que uma imagem trazida de fora vença o SVG gerado, sem que o SVG

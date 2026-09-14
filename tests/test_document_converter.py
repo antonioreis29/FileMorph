@@ -1,5 +1,5 @@
 """
-Testes dos conversores de documento da Fase 7 (item 34 do briefing).
+Testes dos conversores de documento.
 
 Quatro dos cinco caminhos são Python puro (python-docx e PyMuPDF) e
 rodam de verdade aqui: os documentos são criados na hora e o resultado é
@@ -8,10 +8,11 @@ conferido lendo o arquivo produzido de volta.
 O quinto, DOCX → PDF, depende do LibreOffice, que não é uma biblioteca
 Python — exigi-lo instalado transformaria esta parte da suíte em
 "pulado" para quem só quer rodar os testes. No lugar dele entra
-`tests/fake_soffice.py`, pelo mesmo raciocínio do `fake_ffmpeg.py` da
-Fase 6: o código exercitado é o de produção (montagem do comando, busca
-do arquivo gravado, gravação atômica, tradução de erro, cancelamento) e
-a única peça falsa é o programa do outro lado do cano.
+`tests/fake_soffice.py`, pelo mesmo raciocínio do `fake_ffmpeg.py`: o
+código exercitado é o de produção (montagem do comando, busca do arquivo
+gravado, gravação atômica, tradução de erro, cancelamento) e a única peça
+falsa é o programa do outro lado do cano. Esses testes rodam um processo
+externo e são marcados como de integração.
 
 O que estes testes protegem, em uma frase: nenhuma conversão de
 documento pode alterar o original, inventar conteúdo que o arquivo não
@@ -37,8 +38,10 @@ from app.converters.document_converter import (  # noqa: E402
     DocxToPdfConverter,
     DocxToTextConverter,
     PdfToTextConverter,
+    TextReader,
     TextToDocxConverter,
     TextToPdfConverter,
+    detect_text_encoding,
     read_text_file,
     wrap_text_lines,
 )
@@ -118,6 +121,40 @@ def test_read_text_file_falls_back_to_windows_encoding(tmp_path: Path) -> None:
     """
     (tmp_path / "antigo.txt").write_bytes("Ação e coração\n".encode("cp1252"))
     assert read_text_file(tmp_path / "antigo.txt") == "Ação e coração\n"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "a\nb\n",
+        "a\r\nb\r\n\r\nc",
+        "sem quebra no fim",
+        "\n\n\n",
+        "pagina 1\x0cpagina 2\n",
+        "linha separada\nfim\n",
+        "",
+    ],
+)
+def test_text_reader_gives_the_same_lines_as_reading_everything(
+    tmp_path: Path, content: str
+) -> None:
+    """Ler aos poucos não pode mudar o que o documento tem: as linhas são
+    exatamente as que `splitlines` daria sobre o texto inteiro."""
+    source = tmp_path / "texto.txt"
+    source.write_bytes(content.encode("utf-8-sig"))
+
+    with TextReader(source) as text:
+        streamed = list(text.lines())
+
+    assert streamed == read_text_file(source).splitlines()
+
+
+def test_detect_text_encoding_checks_the_whole_file(tmp_path: Path) -> None:
+    source = tmp_path / "longo.txt"
+    source.write_bytes(b"linha sem acento\n" * 120_000 + "Ação\n".encode("cp1252"))
+
+    assert detect_text_encoding(source) == "cp1252"
+    assert read_text_file(source).endswith("Ação\n")
 
 
 # --- Quebra de linha do TXT -> PDF ----------------------------------------
@@ -208,8 +245,20 @@ def test_text_to_pdf_reports_progress_and_finishes_at_100(tmp_path: Path) -> Non
     assert result.success
     assert recorder.reported[-1] == 100
     # Mais de um aviso significa que a barra andou durante a tarefa, e
-    # não só no fim dela (Fase 5).
+    # não só no fim dela.
     assert len(recorder.reported) > 2
+
+
+def test_text_to_pdf_keeps_every_line_across_pages(tmp_path: Path) -> None:
+    """As páginas são montadas enquanto o arquivo é lido; nenhuma linha pode
+    se perder na passagem de uma página para a outra."""
+    source = tmp_path / "numerado.txt"
+    source.write_text("\n".join(f"linha-{n:04d}" for n in range(333)), encoding="utf-8")
+    destination = tmp_path / "numerado.pdf"
+
+    assert TextToPdfConverter().convert(str(source), str(destination)).success
+    text = _pdf_text(destination)
+    assert [f"linha-{n:04d}" in text for n in range(333)] == [True] * 333
 
 
 def test_text_to_pdf_of_an_empty_file_is_one_blank_page(tmp_path: Path) -> None:
@@ -424,6 +473,7 @@ def test_corrupted_pdf_gives_a_clear_message(tmp_path: Path) -> None:
 # --- DOCX -> PDF (LibreOffice) --------------------------------------------
 
 
+@pytest.mark.integration
 def test_docx_to_pdf_uses_libreoffice_and_writes_the_destination(
     tmp_path: Path,
 ) -> None:
@@ -447,6 +497,7 @@ def test_docx_to_pdf_uses_libreoffice_and_writes_the_destination(
     assert any(a.startswith("-env:UserInstallation=") for a in arguments)
 
 
+@pytest.mark.integration
 def test_docx_to_pdf_writes_outside_the_users_folder_first(tmp_path: Path) -> None:
     """O LibreOffice grava onde ele quer; o destino final é nosso.
 
@@ -462,6 +513,7 @@ def test_docx_to_pdf_writes_outside_the_users_folder_first(tmp_path: Path) -> No
     assert [p.name for p in (tmp_path / "saida").iterdir()] == ["relatorio.pdf"]
 
 
+@pytest.mark.integration
 def test_docx_to_pdf_failure_is_translated(tmp_path: Path) -> None:
     source = _write_docx(tmp_path / "ruim.docx", "texto")
     manager = _manager(fail="Error: source file could not be loaded")
@@ -474,6 +526,7 @@ def test_docx_to_pdf_failure_is_translated(tmp_path: Path) -> None:
     assert _leftovers(tmp_path) == []
 
 
+@pytest.mark.integration
 def test_docx_to_pdf_notices_a_silent_failure(tmp_path: Path) -> None:
     """O LibreOffice sabe terminar com sucesso sem ter gravado nada.
 
@@ -490,6 +543,7 @@ def test_docx_to_pdf_notices_a_silent_failure(tmp_path: Path) -> None:
     assert not (tmp_path / "x.pdf").exists()
 
 
+@pytest.mark.integration
 def test_docx_to_pdf_cancellation_leaves_nothing_behind(tmp_path: Path) -> None:
     source = _write_docx(tmp_path / "demorado.docx", "texto")
     destination = tmp_path / "demorado.pdf"
@@ -524,16 +578,35 @@ def test_docx_to_pdf_without_libreoffice_explains_itself(tmp_path: Path) -> None
 # --- Detecção do LibreOffice ----------------------------------------------
 
 
-def test_detect_libreoffice_never_raises() -> None:
+def test_detect_libreoffice_finds_the_first_existing_candidate(tmp_path: Path) -> None:
     """A detecção roda na inicialização: falhar aqui derrubaria o aplicativo.
 
-    Na máquina que roda a suíte o LibreOffice pode estar instalado ou
-    não — o que o teste garante é que a resposta é coerente nos dois
-    casos, e que ela não custa uma exceção.
+    Os candidatos são caminhos de mentira numa pasta temporária, e a versão
+    é lida por uma função de mentira: o teste não depende de o LibreOffice
+    estar instalado nesta máquina, nem o executa.
     """
-    status = detect_libreoffice()
-    assert isinstance(status.available, bool)
-    assert status.available == (status.executable_path is not None)
+    installed = tmp_path / "LibreOffice" / "program" / "soffice.exe"
+    installed.parent.mkdir(parents=True)
+    installed.write_bytes(b"")
+
+    status = detect_libreoffice(
+        candidates=[str(tmp_path / "nao-existe" / "soffice.exe"), str(installed)],
+        read_version=lambda _command: "7.6.4.1",
+    )
+
+    assert status.available
+    assert status.executable_path == str(installed)
+    assert status.version == "7.6.4.1"
+
+
+def test_detect_libreoffice_without_candidates_is_not_an_error(tmp_path: Path) -> None:
+    status = detect_libreoffice(
+        candidates=[str(tmp_path / "nada" / "soffice.exe")],
+        read_version=lambda _command: "nunca chamado",
+    )
+
+    assert not status.available
+    assert status.executable_path is None
 
 
 def test_candidate_paths_are_absolute_or_found_in_the_path() -> None:
@@ -554,6 +627,7 @@ def test_friendly_error_falls_back_to_the_last_line() -> None:
     assert "coisa estranha" in friendly_error("coisa estranha aconteceu")
 
 
+@pytest.mark.integration
 def test_libreoffice_version_is_read_from_the_program() -> None:
     assert _manager().status().version == "9.9.9.9"
 
@@ -561,9 +635,14 @@ def test_libreoffice_version_is_read_from_the_program() -> None:
 # --- Camada de compatibilidade -------------------------------------------
 
 
+class _NoLibreOffice:
+    def is_available(self) -> bool:
+        return False
+
+
 def test_document_converters_are_registered(tmp_path: Path) -> None:
     registry = CompatibilityRegistry()
-    register_builtin_converters(registry)
+    register_builtin_converters(registry, libreoffice=_NoLibreOffice())
 
     assert registry.can_convert("docx", "txt")
     assert registry.can_convert("txt", "docx")
@@ -571,15 +650,19 @@ def test_document_converters_are_registered(tmp_path: Path) -> None:
     assert registry.can_convert("pdf", "txt")
 
 
-def test_docx_to_pdf_is_offered_only_with_libreoffice() -> None:
-    """A regra do item 37 aplicada ao segundo binário externo do projeto.
-
-    Numa máquina sem LibreOffice, "PDF" não pode aparecer no seletor de
-    formato para um DOCX — melhor não oferecer do que falhar na hora.
-    """
-    from app.utils.libreoffice_manager import libreoffice_manager
-
+def test_docx_to_pdf_is_not_offered_without_libreoffice() -> None:
+    """Numa máquina sem LibreOffice, "PDF" não pode aparecer no seletor de
+    formato para um DOCX — melhor não oferecer do que falhar na hora."""
     registry = CompatibilityRegistry()
-    register_builtin_converters(registry)
+    register_builtin_converters(registry, libreoffice=_NoLibreOffice())
 
-    assert registry.can_convert("docx", "pdf") == libreoffice_manager.is_available()
+    assert not registry.can_convert("docx", "pdf")
+    assert registry.can_convert("docx", "txt")  # o resto continua
+
+
+@pytest.mark.integration
+def test_docx_to_pdf_is_offered_with_libreoffice() -> None:
+    registry = CompatibilityRegistry()
+    register_builtin_converters(registry, libreoffice=_manager())
+
+    assert registry.can_convert("docx", "pdf")

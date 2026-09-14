@@ -1,17 +1,23 @@
 """
-Lista de arquivos adicionados, exibidos como cards (item 9 do briefing).
+Lista de arquivos adicionados, exibidos como cards.
 
 Cada card mostra ícone, nome, extensão, tamanho, status e um botão de
 remover. `FileListWidget` gerencia a coleção de cards e expõe sinais
 para quando um arquivo é removido ou quando a lista muda (para que a
 janela principal possa recalcular o seletor de formato e habilitar/
 desabilitar o botão principal).
+
+O card tem duas linhas: o nome em cima e, embaixo, o tipo e o tamanho.
+Antes essas duas informações só existiam no tooltip, o que equivale a
+não existirem para quem não passa o mouse — e a linha única deixava o
+nome disputar espaço com o status. O nome é **encurtado no meio**
+(`ElidedLabel`) em vez de esticar o card: começo e fim de um nome longo
+são justamente as partes que identificam o arquivo.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -25,24 +31,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# A situação de cada arquivo é definida no núcleo, junto do acompanhamento
+# do lote que a altera; aqui só se decide como ela aparece.
+from app.core.batch import FileStatus
 from app.ui.file_icons import ICON_SIZE, fallback_emoji, icon_pixmap
 from app.utils.file_utils import get_extension, get_file_size_display, get_filename
 
+__all__ = ["ElidedLabel", "FileCard", "FileEntry", "FileListWidget", "FileStatus"]
+
 _STATUS_LABELS = {
-    "waiting": "aguardando",
-    "processing": "processando",
-    "done": "concluído",
-    "error": "erro",
-    "cancelled": "cancelado",
+    FileStatus.WAITING.value: "aguardando",
+    FileStatus.PROCESSING.value: "processando",
+    FileStatus.DONE.value: "concluído",
+    FileStatus.ERROR.value: "erro",
+    FileStatus.CANCELLED.value: "cancelado",
 }
-
-
-class FileStatus(str, Enum):
-    WAITING = "waiting"
-    PROCESSING = "processing"
-    DONE = "done"
-    ERROR = "error"
-    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -50,6 +53,43 @@ class FileEntry:
     path: str
     status: FileStatus = FileStatus.WAITING
     error_message: str | None = None
+
+
+class ElidedLabel(QLabel):
+    """Um QLabel que encurta o próprio texto com "…" quando não cabe.
+
+    O corte é recalculado a cada mudança de largura e aplicado com
+    `super().setText`, de modo que quem pinta continua sendo o QLabel
+    de sempre — e, com isso, a cor e a fonte continuam vindo do QSS.
+    Pintar o texto à mão em `paintEvent` custaria essa ligação.
+
+    A política horizontal é `Ignored` de propósito: sem isso o rótulo
+    pediria ao layout a largura do texto inteiro, que é exatamente o
+    que se quer evitar — o card ficaria largo em vez de o nome ficar
+    curto.
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text: str) -> None:  # noqa: N802 — nome do Qt
+        self._full_text = text
+        self._apply_elision()
+
+    def full_text(self) -> str:
+        return self._full_text
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — nome do Qt
+        super().resizeEvent(event)
+        self._apply_elision()
+
+    def _apply_elision(self) -> None:
+        largura = max(self.width() - 2, 32)
+        super().setText(
+            self.fontMetrics().elidedText(self._full_text, Qt.TextElideMode.ElideMiddle, largura)
+        )
 
 
 class FileCard(QFrame):
@@ -66,11 +106,11 @@ class FileCard(QFrame):
         # Sem sombra: a antiga era cinza fixo, o que no tema escuro
         # virava um halo sujo em volta do card. A borda do QSS ja separa.
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(13, 8, 8, 8)
-        outer.setSpacing(3)
+        outer.setContentsMargins(14, 10, 10, 10)
+        outer.setSpacing(4)
 
         row = QHBoxLayout()
-        row.setSpacing(10)
+        row.setSpacing(12)
 
         # O ícone gráfico é o caminho normal; o emoji só entra se a
         # arte não estiver instalada (veja app/ui/file_icons.py).
@@ -86,8 +126,21 @@ class FileCard(QFrame):
             self._icon_label.setText(fallback_emoji(entry.path))
         self._icon_label.setAccessibleName(f"Arquivo {get_extension(entry.path).upper()}")
 
-        self._name_label = QLabel(get_filename(entry.path))
+        # As duas linhas de texto do card, empilhadas: o nome manda, o
+        # tipo e o tamanho ficam abaixo, em tom secundário.
+        text_column = QVBoxLayout()
+        text_column.setSpacing(1)
+        text_column.setContentsMargins(0, 0, 0, 0)
+
+        self._name_label = ElidedLabel(get_filename(entry.path))
         self._name_label.setObjectName("cardName")
+
+        ext = get_extension(entry.path).upper()
+        self._meta_label = QLabel(f"{ext} • {get_file_size_display(entry.path)}")
+        self._meta_label.setObjectName("cardMeta")
+
+        text_column.addWidget(self._name_label)
+        text_column.addWidget(self._meta_label)
 
         self._status_label = QLabel(_STATUS_LABELS[entry.status.value])
         self._status_label.setObjectName("cardStatus")
@@ -95,12 +148,13 @@ class FileCard(QFrame):
 
         self._remove_button = QPushButton("×")
         self._remove_button.setObjectName("cardRemove")
-        self._remove_button.setFixedSize(24, 24)
+        self._remove_button.setFixedSize(26, 26)
         self._remove_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._remove_button.setToolTip("Remover da lista")
         self._remove_button.clicked.connect(lambda: self.remove_requested.emit(entry.path))
 
         row.addWidget(self._icon_label)
-        row.addWidget(self._name_label, 1)
+        row.addLayout(text_column, 1)
         row.addWidget(self._status_label)
         row.addWidget(self._remove_button)
         outer.addLayout(row)
@@ -113,10 +167,9 @@ class FileCard(QFrame):
         self._error_label.hide()
         outer.addWidget(self._error_label)
 
-        # Extensao e tamanho saem da linha para nao competir com o nome,
-        # mas continuam a um passe de mouse de distancia.
-        ext = get_extension(entry.path).upper()
-        self.setToolTip(f"{ext} • {get_file_size_display(entry.path)}\n{entry.path}")
+        # O caminho completo continua no tooltip: é a única informação
+        # do card que não tem como caber na linha em nenhum tamanho.
+        self.setToolTip(entry.path)
 
     def set_status(self, status: FileStatus, error_message: str | None = None) -> None:
         self.entry.status = status
@@ -146,9 +199,14 @@ class FileListWidget(QScrollArea):
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        # A barra horizontal nunca deve aparecer: o card se adapta à
+        # largura (o nome encurta), então uma barra horizontal só
+        # poderia ser sintoma de um card que não soube encolher.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
+        self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(8)
         self._layout.addStretch()
         self.setWidget(self._container)
@@ -190,14 +248,17 @@ class FileListWidget(QScrollArea):
     def is_empty(self) -> bool:
         return len(self._cards) == 0
 
+    def count(self) -> int:
+        return len(self._cards)
+
     def set_status(self, path: str, status: FileStatus, error_message: str | None = None) -> None:
         card = self._cards.get(path)
         if card is not None:
             card.set_status(status, error_message)
 
     def reorder(self, ordered_paths: list[str]) -> None:
-        """Reordena os cards conforme a lista fornecida (item 12: a
-        ordem determina a ordem do arquivo final na junção)."""
+        """Reordena os cards conforme a lista fornecida: a ordem da lista
+        determina a ordem do arquivo final na junção."""
         for path in ordered_paths:
             card = self._cards.get(path)
             if card is not None:

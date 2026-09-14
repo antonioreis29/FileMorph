@@ -1,14 +1,17 @@
 @echo off
 REM ============================================================
-REM  FileMorph - abre o aplicativo com duplo clique, sem
-REM  precisar do terminal.
+REM  FileMorph - abre o aplicativo a partir do codigo-fonte, com
+REM  duplo clique, usando um Python instalado na maquina.
 REM
-REM  Este arquivo deve ficar DENTRO da pasta FileMorph, no mesmo
-REM  lugar onde esta o main.py.
+REM  LEGADO: a forma recomendada de usar o FileMorph e o instalador
+REM  (FileMorph-<versao>-setup.exe), que nao precisa de Python.
+REM
+REM  Este arquivo fica em dev\legacy, dois niveis abaixo da pasta do
+REM  projeto, onde esta o main.py.
 REM ============================================================
 
 title FileMorph
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 
 if not exist "main.py" goto sem_main
 
@@ -52,8 +55,8 @@ exit /b 0
 
 
 :sem_main
-echo Nao encontrei o arquivo main.py nesta pasta.
-echo Mova o FileMorph.bat para a pasta onde esta o main.py.
+echo Nao encontrei o arquivo main.py dois niveis acima deste arquivo.
+echo O FileMorph.bat precisa ficar em dev\legacy, dentro da pasta do FileMorph.
 echo.
 pause
 exit /b 1

@@ -38,6 +38,11 @@ from pathlib import Path
 
 from PIL import Image
 
+RAIZ = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RAIZ))
+
+from app.utils.resources import get_mascot_file  # noqa: E402
+
 # Um pixel é "fundo" quando é lavado (pouca cor) e claro. Os limites
 # são generosos de propósito: a compressão JPEG espalha os valores, e
 # um xadrez que deveria ser cinza puro vira dezenas de tons próximos.
@@ -121,6 +126,23 @@ def recortar(imagem: Image.Image) -> Image.Image:
     return imagem.crop(caixa) if caixa else imagem
 
 
+def avisar_se_nao_for_o_escolhido(destino: Path) -> None:
+    """Avisa quando o arquivo recém-gravado não é o que a janela vai usar.
+
+    A janela prefere o `ditto.*` animado ao parado (ver
+    `app/utils/resources.py`). Sem este aviso, gravar um `ditto.png` com
+    um `ditto.gif` ao lado seria um comando que termina em "pronto" e
+    não muda nada na tela — o pior tipo de silêncio.
+    """
+    escolhido = get_mascot_file()
+    if escolhido is None or escolhido.resolve() == destino.resolve():
+        return
+    print()
+    print(f"AVISO: a janela vai continuar usando '{escolhido.name}', que tem")
+    print(f"       preferência sobre '{destino.name}'. Para usar o arquivo")
+    print(f"       recém-gravado, tire '{escolhido.name}' da pasta.")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -132,8 +154,7 @@ def main() -> int:
         print(f"Erro: '{origem}' não existe.")
         return 1
 
-    raiz = Path(__file__).resolve().parent.parent
-    destino = raiz / "assets" / "mascot" / "ditto.png"
+    destino = RAIZ / "assets" / "mascot" / "ditto.png"
     destino.parent.mkdir(parents=True, exist_ok=True)
 
     with Image.open(origem) as imagem:
@@ -145,6 +166,7 @@ def main() -> int:
 
     print(f"Origem:  {origem.name}  ({original[0]}x{original[1]}, {formato})")
     print(f"Destino: {destino}  ({limpa.size[0]}x{limpa.size[1]}, PNG com transparência)")
+    avisar_se_nao_for_o_escolhido(destino)
     return 0
 
 

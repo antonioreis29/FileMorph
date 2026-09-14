@@ -1,617 +1,411 @@
 # FileMorph
 
-Aplicativo desktop para Windows que converte, transforma e junta arquivos
-localmente — sem depender de sites diferentes para cada tipo de conversão.
+**Converta, junte e organize seus arquivos no próprio computador — sem sites, sem internet, sem complicação.**
 
-**Conceito:** Arraste seus arquivos → escolha o formato → clique → pronto.
+O FileMorph é um aplicativo para Windows que reúne, em uma janela só, as
+transformações de arquivo do dia a dia: mudar uma imagem de formato,
+transformar um PDF em imagens, juntar vários documentos em um único PDF,
+tirar o áudio de um vídeo, mudar a ordem das páginas de um PDF e muito mais.
 
-## Status atual do desenvolvimento
+A ideia é simples:
 
-O desenvolvimento segue por fases, e cada fase só é marcada como pronta
-quando existe de verdade no aplicativo:
+> **Arraste seus arquivos → escolha o que fazer → clique → pronto.**
 
-- ✅ **FASE 1 — Estrutura**: arquitetura modular, configuração, logging.
-- ✅ **FASE 2 — Interface**: janela principal, tema claro/escuro/sistema,
-  drag and drop, lista de arquivos, seletor de operação, botão principal.
-- ✅ **FASE 3 — Conversão de imagens**: PNG, JPG e WEBP em qualquer
-  combinação, em lote, com progresso, cancelamento e relatório de erros
-  por arquivo.
-- ✅ **FASE 4 — PDF e junção**: imagens → PDF, PDF → imagens e o modo
-  "Juntar", que une vários PDFs e imagens em um único PDF.
-- ✅ **FASE 5 — fila de processamento real**: progresso de dentro das
-  tarefas e cancelamento que interrompe a conversão já em andamento.
-- ✅ **FASE 6 — áudio e vídeo** via FFmpeg: MP3, WAV, FLAC, OGG e M4A
-  em qualquer combinação; MP4, MKV e WEBM entre si; e a extração da
-  trilha sonora de um vídeo como arquivo de áudio.
-- ✅ **FASE 7 — documentos**: DOCX, TXT e PDF entre si — extração de
-  texto, geração de documento e, com o LibreOffice instalado, DOCX em
-  PDF com o layout preservado. Documentos também entram no modo
-  "Juntar".
-- ✅ **FASE 8 — mascote animado**: o mascote reage ao que está
-  acontecendo (esperando, trabalhando, comemorando, errando), e as duas
-  opções de mascote das configurações passaram a funcionar de verdade.
-- ✅ **FASE 9 — planilhas**: XLSX e CSV nos dois sentidos e, com o
-  LibreOffice instalado, XLSX em PDF. Planilhas também entram no modo
-  "Juntar".
+Tudo acontece no seu computador. Nenhum arquivo é enviado para a internet, e
+**o arquivo original nunca é alterado**: o resultado é sempre um arquivo novo.
 
-Com isso, **todas as fases do roteiro original estão entregues**. O que
-vier daqui para frente é ampliação (ver "Próximos passos" no fim).
+---
 
-O princípio de projeto continua valendo: a interface só oferece
-operações que existem de fato — não há botões ou opções "decorativas"
-simulando funcionalidades inexistentes. Se você adicionar um BMP, o
-seletor de formato fica vazio e o botão principal desabilitado, porque
-ainda não existe conversor registrado para esse formato. O mesmo vale
-para um MP4 em uma máquina sem FFmpeg instalado, ou para a opção "PDF"
-de um DOCX em uma máquina sem LibreOffice.
+## Sumário
 
-### O que a Fase 3 já faz
+- [O que o FileMorph faz](#o-que-o-filemorph-faz)
+- [Tipos de arquivo suportados](#tipos-de-arquivo-suportados)
+- [Instalação](#instalação)
+- [Passo a passo básico](#passo-a-passo-básico)
+- [Conhecendo a tela principal](#conhecendo-a-tela-principal)
+- [Como usar cada funcionalidade](#como-usar-cada-funcionalidade)
+  - [Converter arquivos](#converter-arquivos)
+  - [Juntar arquivos em um PDF](#juntar-arquivos-em-um-pdf)
+  - [Organizar as páginas de um PDF](#organizar-as-páginas-de-um-pdf)
+- [Exemplos rápidos](#exemplos-rápidos)
+- [Configurações](#configurações)
+- [Onde ficam os arquivos gerados](#onde-ficam-os-arquivos-gerados)
+- [Informações importantes e limitações](#informações-importantes-e-limitações)
+- [Dúvidas comuns](#dúvidas-comuns)
+- [Desinstalar](#desinstalar)
+- [Para quem desenvolve o FileMorph](#para-quem-desenvolve-o-filemorph)
 
-- Converte imagens **PNG ↔ JPG ↔ WEBP**, uma ou várias de uma vez.
-- Transparência vira fundo branco ao gerar JPG (que não tem canal alfa),
-  em vez de falhar ou produzir cores erradas.
-- Preserva metadados EXIF e perfil de cor ICC quando o formato de destino
-  suporta, e aplica a rotação EXIF aos pixels para a foto não sair deitada.
-- **Nunca altera o arquivo original.** Converter PNG para PNG na mesma
-  pasta gera uma cópia numerada em vez de gravar por cima da origem.
-- Se o arquivo de destino já existe, pergunta o que fazer:
-  *Substituir*, *Criar cópia* ou *Cancelar* (respeitando a opção
-  "confirmar substituição" nas configurações).
-- Um arquivo corrompido no meio do lote não interrompe os demais: cada
-  arquivo recebe seu próprio status (`concluído` / `erro` + motivo) na
-  lista, e um resumo aparece ao final.
-- A gravação é atômica: uma falha no meio da conversão não deixa arquivo
-  truncado nem destrói um arquivo bom que já ocupasse aquele nome.
+---
 
-### O que a Fase 4 acrescentou
+## O que o FileMorph faz
 
-**Converter, com PDF nos dois sentidos:**
+O FileMorph tem **três modos**, escolhidos no topo da janela:
 
-- **Imagem → PDF**: cada imagem vira um PDF de uma página, do tamanho
-  exato da imagem (o DPI declarado no arquivo é respeitado; na falta
-  dele, assume-se 72 dpi, sem recortar nem redimensionar nada).
-- **PDF → imagem** (PNG, JPG ou WEBP), rasterizando a 150 dpi. Um PDF de
-  uma página vira exatamente o arquivo pedido; um PDF de várias páginas
-  vira uma subpasta com o nome do documento
-  (`relatorio/relatorio_p01.png`, `_p02`, ...), para não espalhar
-  dezenas de arquivos soltos na pasta de saída. Rodar a conversão de
-  novo cria uma pasta nova em vez de sobrescrever a anterior.
-- PDF protegido por senha ou corrompido dá uma mensagem clara, em vez
-  de erro técnico.
+| Modo | Para que serve |
+|---|---|
+| **CONVERTER** | Muda o formato de um ou vários arquivos de uma vez. Ex.: fotos JPG para PNG, PDF para imagens, planilha XLSX para CSV, vídeo MP4 para MP3. |
+| **JUNTAR** | Une vários arquivos — PDFs, imagens, textos, documentos e planilhas — em **um único PDF**. |
+| **ORGANIZAR** | Mostra as páginas de um PDF em miniatura e deixa você **mudar a ordem arrastando as páginas**. |
 
-**Juntar (o modo que até aqui não fazia nada):**
+E em todos eles:
 
-- Vários PDFs e/ou imagens viram **um único PDF**, na ordem em que
-  aparecem na lista (a ordem da lista é a ordem do documento final).
-- Misturar os dois tipos funciona: cada imagem é convertida para uma
-  página de PDF em uma pasta temporária, e os intermediários são
-  apagados ao final — tenha a junção dado certo ou errado.
-- O nome e o local do arquivo final são escolhidos na hora, em um
-  diálogo do próprio Windows.
+- **Vários arquivos de uma vez** — cada arquivo é processado por conta própria; se um der problema, os outros continuam.
+- **Barra de progresso e botão Cancelar** — dá para acompanhar e interromper a qualquer momento, sem deixar arquivos pela metade.
+- **Aviso claro quando algo dá errado** — por exemplo, um arquivo corrompido ou protegido por senha aparece na lista com o motivo do erro.
+- **Seus originais ficam intactos** — o FileMorph só cria arquivos novos.
 
-### O que a Fase 5 acrescentou
+---
 
-Até aqui, uma conversão era uma caixa-preta: a barra só andava quando um
-arquivo inteiro terminava, e "Cancelar" apenas impedia que os arquivos
-*seguintes* começassem. Um PDF de 200 páginas ficava em 0% por um bom
-tempo e não tinha como ser interrompido.
+## Tipos de arquivo suportados
 
-- **Progresso de dentro da tarefa**: a barra avança página a página de
-  um PDF e arquivo a arquivo de uma junção, então ela se move mesmo
-  quando o lote tem um único item grande.
-- **Cancelamento de verdade**: o botão "Cancelar" alcança a conversão
-  que já está rodando. A parada é *cooperativa* — acontece no próximo
-  ponto seguro (entre duas páginas, entre dois arquivos), nunca no meio
-  de uma gravação.
-- **Nada pela metade**: ao cancelar, as páginas já escritas são
-  apagadas, a subpasta vazia é removida, os intermediários da junção são
-  limpos e um arquivo que já existisse no destino continua intacto.
-- Os arquivos interrompidos aparecem na lista como `cancelado` — não
-  como erro, porque não foram um.
-
-Por dentro, isso é um `TaskContext` (`app/core/task_context.py`) que a
-fila entrega a cada tarefa: por ele a operação reporta o andamento e
-pergunta se deve parar. O módulo é livre de Qt de propósito, para que os
-conversores não dependam da interface.
-
-### O que a Fase 6 acrescentou
-
-Áudio e vídeo, via **FFmpeg** — o primeiro conversor do FileMorph que
-depende de um programa externo em vez de uma biblioteca Python.
-
-- **Áudio**: MP3, WAV, FLAC, OGG e M4A em qualquer combinação. As tags
-  (título, artista, álbum) são preservadas; a capa do álbum é
-  descartada, porque formatos como o WAV não têm onde guardá-la e a
-  conversão falharia por causa dela.
-- **Vídeo**: MP4, MKV e WEBM entre si, além de AVI e MOV como origem.
-  O resultado é H.264 + AAC (ou VP9 + Opus no WEBM), a combinação que
-  toca em praticamente qualquer lugar.
-- **Trilha sonora de um vídeo**: um MP4 também pode virar MP3, WAV,
-  FLAC, OGG ou M4A, sem precisar de duas conversões em sequência.
-- **Progresso contínuo**: a barra acompanha a duração já processada, e
-  não etapas discretas — é o que faz um vídeo de dez minutos, que é uma
-  tarefa só, mostrar que está andando.
-- **Cancelamento real**: "Cancelar" encerra o processo do FFmpeg em
-  andamento. Como a saída sempre vai para um arquivo temporário, o que
-  já tinha sido escrito é descartado e um arquivo que já existisse no
-  destino continua intacto.
-
-**O aplicativo só oferece o que esta máquina consegue fazer.** A
-verificação é dupla: se o FFmpeg não está instalado, os conversores de
-mídia nem chegam a ser registrados e áudio/vídeo somem do seletor de
-formato; se ele está instalado mas foi compilado sem algum codificador
-(nem toda build traz `libvpx-vp9`, por exemplo), aquele formato
-específico deixa de ser oferecido — em vez de aparecer no seletor e
-falhar na hora de converter. O menu **"Verificar dependências"** mostra
-exatamente o que está habilitado nesta instalação.
-
-Vale o aviso: converter vídeo é recodificar quadro a quadro, e leva na
-ordem de grandeza da duração do próprio vídeo — não os segundos de uma
-imagem. O WEBM é o mais demorado dos três.
-
-### O que a Fase 7 acrescentou
-
-Documentos: **DOCX, TXT e PDF** entre si, em cinco caminhos.
-
-- **DOCX → TXT** e **TXT → DOCX** (python-docx), sem depender de nada
-  externo. Tabelas do Word saem com as células separadas por tabulação,
-  e na posição certa do documento — parágrafos e tabelas são listas
-  separadas na biblioteca, e juntá-las sem cuidado mandaria todas as
-  tabelas para o fim do arquivo.
-- **TXT → PDF** (PyMuPDF): página A4, fonte monoespaçada, margem de
-  2 cm, quebra de linha automática e quantas páginas forem necessárias.
-- **PDF → TXT** (PyMuPDF), página por página.
-- **DOCX → PDF** (LibreOffice), preservando o layout.
-
-**O que se perde em cada direção**, porque é da natureza dos formatos e
-não uma limitação do FileMorph: ir para TXT guarda o texto e descarta o
-que não é texto (negrito, cores, imagens, cabeçalho) — um arquivo .txt
-não tem onde guardar isso. Vir de TXT produz um documento de formatação
-neutra, um parágrafo por linha, porque não há layout a adivinhar. Só o
-DOCX → PDF preserva a aparência, e é justamente o que precisa do
-LibreOffice.
-
-Dois detalhes que decidem se o resultado é utilizável:
-
-- **A codificação do .txt é descoberta por tentativa.** Um arquivo de
-  texto não declara em que codificação foi gravado, então o FileMorph
-  tenta UTF-8 (com e sem BOM) e depois a codificação histórica do
-  Windows em português, que é onde moram os .txt antigos com acento. Sem
-  isso, um arquivo do Bloco de Notas de dez anos atrás abriria com
-  caracteres trocados.
-- **A pontuação tipográfica é traduzida no TXT → PDF.** As fontes que
-  todo leitor de PDF já tem cobrem o português, mas não o travessão, as
-  aspas curvas, as reticências e o marcador de lista — cada um deles
-  viraria um quadradinho no PDF, e texto escrito em editor moderno é
-  cheio deles. Eles são convertidos para o equivalente em ASCII
-  (`—` → `--`, `“` → `"`), o que mantém o arquivo leve e legível; a
-  alternativa seria embutir uma fonte Unicode inteira no PDF.
-
-**Um PDF digitalizado não tem texto por dentro** — é a imagem de uma
-página. Extrair dele daria um arquivo vazio, então a conversão avisa
-que aquilo exigiria reconhecimento de texto (OCR), que o FileMorph não
-faz. A mesma ideia vale para um DOCX que só tem imagens.
-
-**Juntar também aceita documentos.** Um .txt e um .docx podem ser
-misturados a PDFs e imagens na mesma junção, e cada um é convertido para
-PDF antes de entrar no documento final — o mesmo pipeline intermediário
-que as imagens já usavam desde a Fase 4. O .docx só aparece nessa lista
-se o LibreOffice estiver instalado.
-
-**Sobre o LibreOffice.** É o segundo programa externo do projeto, depois
-do FFmpeg, e existe por um motivo só: um DOCX não é um arquivo de texto,
-é um pacote de XML com estilos, tabelas, imagens e quebras de página.
-Reimplementar esse layout em Python daria um PDF parecido com o
-documento em casos simples e bem diferente dele em qualquer documento
-real. Quem sabe paginar um DOCX é um processador de texto, então é um
-processador de texto que faz esse trabalho. Sem ele instalado, "PDF"
-simplesmente não aparece no seletor de formato para um DOCX, e as outras
-quatro conversões de documento continuam funcionando.
-
-Duas diferenças práticas em relação ao FFmpeg, ambas impostas pelo
-LibreOffice: ele **não publica andamento** (o `--convert-to` não diz
-nada até terminar), então a barra de progresso avança quando o arquivo
-termina, em vez de mostrar um percentual inventado — o botão Cancelar
-continua funcionando normalmente; e ele **aceita um pedido por perfil de
-usuário**, então o FileMorph cria um perfil próprio e serializa as
-conversões de DOCX, porque dois `soffice` no mesmo perfil terminam na
-hora sem converter nada.
-
-### O que a Fase 8 acrescentou
-
-O mascote deixou de ser uma figura parada e passou a **reagir ao que o
-aplicativo está fazendo**: ele respira devagar enquanto espera arquivos,
-fica mais desperto quando há algo na lista, se esmaga e balança enquanto
-converte, pula quando termina, faz "não" com o corpo quando dá erro e
-murcha quando o usuário cancela. Cada um desses momentos já existia no
-código — eram as falas dele —, e agora a fala e o movimento saem da
-mesma tabela, para não poderem discordar.
-
-**A animação é procedural, não são quadros desenhados.** Existe uma
-imagem só, sendo esticada e deslocada ao longo do tempo. A razão é a
-regra que já valia para a arte: qualquer PNG jogado em
-`assets/mascot/` funciona como mascote. Se a animação fossem quadros
-prontos, ela só funcionaria com a arte que veio no projeto, e a imagem
-de quem trocasse o mascote voltaria a ficar estática.
-
-O vocabulário é o de sempre em animação — **esmagar e esticar**. Dois
-detalhes fazem a diferença entre "massinha elástica" e "imagem sendo
-redimensionada":
-
-- **A área é conservada.** Encurtar 10% alarga 10%. Sem isso a figura
-  parece crescer e diminuir, em vez de se deformar.
-- **O desenho é ancorado na base.** O mascote se esmaga apoiado no chão,
-  como um corpo com peso, em vez de encolher no meio do ar.
-
-**Não há rotação em lugar nenhum**, e isso é deliberado: girar pixel art
-em um ângulo qualquer borra a borda dura de cada pixel, que é justamente
-o que dá o estilo. Balanço lateral comunica a mesma coisa sem esse custo.
-
-Se a imagem da pasta for um **GIF animado**, ele é reproduzido de
-verdade, quadro a quadro, e a pose continua sendo aplicada por cima — é
-ela que comunica o estado do aplicativo, coisa que um GIF pronto não tem
-como saber.
-
-**As duas opções do mascote agora funcionam.** "Mostrar mensagens do
-mascote" e "Animar o mascote" existiam na janela de configurações desde a
-Fase 1 sem fazer efeito nenhum — controle decorativo, exatamente o que o
-projeto diz não fazer. Desligar as mensagens esconde a fala; desligar a
-animação deixa o mascote parado na pose neutra e desliga o temporizador,
-que também é o que se deve a quem prefere uma interface sem movimento. O
-temporizador também para sozinho quando a janela é escondida: não faz
-sentido desenhar quadros que ninguém vê.
-
-### O que a Fase 9 acrescentou
-
-Planilhas: **XLSX e CSV** nos dois sentidos (openpyxl) e **XLSX → PDF**
-pelo LibreOffice, o mesmo caminho que o DOCX já usava.
-
-Planilha é onde dado se corrompe em silêncio, e as três decisões abaixo
-são todas sobre isso.
-
-**A planilha de várias abas vira uma pasta de CSVs.** Um CSV guarda uma
-tabela; uma pasta de trabalho guarda quantas quiser. Converter só a aba
-ativa e calar sobre as outras perderia dados sem avisar. Uma aba só vira
-exatamente o arquivo pedido; várias viram uma subpasta com um CSV por
-aba (`ano/ano_01_Janeiro.csv`, `ano_02_Fevereiro.csv`, ...) — a mesma
-regra que o PDF de várias páginas usa desde a Fase 4. **Abas ocultas
-entram também**: é onde costuma morar a tabela de apoio das fórmulas.
-
-**O CSV é escrito no dialeto que o Excel desta máquina escreve** — ponto
-e vírgula como separador, vírgula como decimal, UTF-8 com BOM. Parece
-arbitrário e é o oposto: o Excel em português escreve e espera assim, e
-é nele que o arquivo vai ser aberto. Um CSV separado por vírgula, que é
-o dialeto internacional, abre no Excel brasileiro com tudo empilhado na
-coluna A — o usuário veria um arquivo quebrado e culparia o FileMorph,
-com razão. Sem o BOM, o Excel ignora a codificação e come os acentos. A
-direção contrária **aceita os dois dialetos** (o separador é descoberto
-contando colunas), então um CSV baixado da internet converte igual.
-
-**Vindo do CSV, só vira número o que não pode ser confundido:**
-
-| No arquivo | Na planilha | Por quê |
+| Tipo | Arquivos que o FileMorph abre | Pode virar |
 |---|---|---|
-| `42`, `-3`, `1,5`, `2.75` | número | inequívoco, e é o que permite somar |
-| `007`, `01310-100` | texto | virar número comeria o zero da frente — é o defeito clássico que estraga CEP, código de produto e telefone |
-| `03/04/2024` | texto | 3 de abril ou 4 de março? Chutar erra metade das vezes, e a planilha esconderia o chute atrás de uma data formatada |
-| `1.234` | texto | mil duzentos e trinta e quatro, ou um e pouco? Depende do país de quem gravou |
-| `=SOMA(A1:A9)` | texto | uma planilha que executa o que vinha escrito num arquivo de texto é porta de entrada conhecida para conteúdo malicioso, além de não ser o que o arquivo dizia |
+| **Imagens** | PNG, JPG (JPEG), WEBP | PNG, JPG, WEBP ou **PDF** |
+| **PDF** | PDF | PNG, JPG, WEBP (uma imagem por página) ou **TXT** (só o texto) |
+| **Documentos** | DOCX (Word) | TXT ou PDF ¹ |
+| | TXT (texto) | DOCX ou PDF |
+| **Planilhas** | XLSX (Excel) | CSV ou PDF ¹ |
+| | CSV | XLSX |
+| **Áudio** ² | MP3, WAV, FLAC, OGG, M4A | qualquer um desses cinco |
+| **Vídeo** ² | MP4, MKV, AVI, MOV, WEBM | MP4, MKV, WEBM — ou **só o áudio** (MP3, WAV, FLAC, OGG, M4A) |
 
-Na volta, o caminho é o mesmo: datas saem em formato ISO
-(`2024-03-04`), que é o único não ambíguo e que o Excel reconhece em
-qualquer idioma, e um inteiro guardado como decimal (o Excel faz isso
-com frequência) sai sem o `.0` pendurado, que não estava na planilha.
+¹ Precisa do programa gratuito **LibreOffice** instalado (veja [Programas opcionais](#programas-opcionais)).
+² Precisa do programa gratuito **FFmpeg** instalado (veja [Programas opcionais](#programas-opcionais)).
 
-**Fórmula vira o último valor calculado.** Nenhuma biblioteca de leitura
-calcula fórmula — o que existe no arquivo é o resultado que o Excel
-gravou da última vez. Uma planilha gerada por um programa que nunca
-calculou nada pode não ter esses valores guardados, e aí a célula sai
-vazia. É uma propriedade do arquivo, não da conversão.
+**No modo JUNTAR** entram PDF, PNG, JPG, WEBP e TXT — e também DOCX e XLSX, se o LibreOffice estiver instalado.
 
-## Requisitos
+**No modo ORGANIZAR** entram arquivos PDF.
 
-- Windows 10/11 (desenvolvido e pensado para Windows, mas roda em
-  qualquer SO com Python + PySide6 para fins de desenvolvimento).
-- Python 3.12+
-- PySide6 (interface), Pillow (imagens), pypdf (junção), PyMuPDF
-  (leitura de PDF e geração de PDF a partir de texto), python-docx
-  (documentos do Word) e openpyxl (planilhas) — todos instalados pelo
-  `requirements.txt`. Cada um é verificado separadamente na
-  inicialização: faltando um deles, o aplicativo abre normalmente e
-  apenas as operações que dependiam daquela biblioteca deixam de ser
-  oferecidas, com o motivo no log.
-- **FFmpeg** (opcional, para áudio e vídeo): não é um pacote pip. Baixe
-  em [ffmpeg.org](https://ffmpeg.org), descompacte e adicione a pasta
-  `bin` ao PATH do Windows. Sem ele o FileMorph funciona normalmente
-  para imagens, PDF e documentos.
-- **LibreOffice** (opcional, só para converter DOCX e XLSX em PDF):
-  também não é um pacote pip. Instale de
-  [libreoffice.org](https://libreoffice.org) — o FileMorph o encontra
-  sozinho, sem precisar mexer no PATH. Sem ele as outras conversões de
-  documento e de planilha continuam disponíveis.
+> BMP, TIFF e GIF são reconhecidos pelo FileMorph, mas ainda não têm conversão.
+> Se você adicioná-los, o aplicativo avisa que não há formato disponível para eles.
 
-O menu **"Verificar dependências"** mostra o estado dos dois programas
-externos e o que cada um habilita nesta máquina.
+---
 
-## Instalação (para usar o aplicativo)
+## Instalação
 
-**Dê um duplo clique em `Instalar FileMorph.bat`**, na raiz do projeto.
+### Com o instalador (recomendado)
 
-O instalador de verdade é o `install.ps1` ao lado dele; o `.bat` existe
-porque o Windows **não executa um `.ps1` com duplo clique**. Por
-segurança, a extensão `.ps1` vem associada ao Bloco de Notas, então
-clicar no `install.ps1` apenas abre o código como texto — o que costuma
-parecer um defeito e não é. O `.bat` chama o PowerShell explicitamente e
-manda ele rodar o script.
+1. Dê um duplo clique no instalador **`FileMorph-<versão>-setup.exe`**.
+2. Siga as etapas do instalador. Não é preciso ser administrador do computador, e **não é preciso ter Python instalado**: tudo o que o FileMorph usa vem dentro dele.
+3. Pronto: o FileMorph aparece no **Menu Iniciar** (e na **Área de Trabalho**, se você marcar essa opção).
 
-Se preferir o terminal, o efeito é o mesmo:
+> O Windows pode mostrar o aviso "O Windows protegeu o computador", porque o
+> instalador não tem assinatura digital. Clique em **Mais informações** e depois
+> em **Executar assim mesmo**.
+
+**Conferindo o arquivo baixado.** Junto do instalador vem um arquivo
+`FileMorph-<versão>-setup.exe.sha256`. Para confirmar que o instalador chegou
+inteiro, abra o PowerShell na pasta dele e rode
+`Get-FileHash .\FileMorph-<versão>-setup.exe -Algorithm SHA256`: o código que
+aparece precisa ser igual ao do arquivo `.sha256`.
+
+### Versão portátil (sem instalar)
+
+Se você não pode instalar programas, use **`FileMorph-<versão>-portable.exe`**:
+é um arquivo só, que abre com duplo clique.
+
+- Ele **demora alguns segundos a mais para abrir** que a versão instalada, porque
+  a cada abertura descompacta o aplicativo numa pasta temporária.
+- Não cria atalhos nem aparece em Configurações → Aplicativos: para "desinstalar",
+  basta apagar o arquivo.
+- As configurações ficam no mesmo lugar da versão instalada
+  (`%APPDATA%\FileMorph`), e não ao lado do arquivo.
+
+### Programas opcionais
+
+O FileMorph funciona sozinho para imagens, PDF, textos, documentos e planilhas.
+Duas funções dependem de programas gratuitos, que você instala só se precisar:
+
+| Programa | Para que serve | Onde baixar |
+|---|---|---|
+| **FFmpeg** | Converter **áudio e vídeo** e tirar o áudio de um vídeo | [ffmpeg.org](https://ffmpeg.org/download.html) — depois de baixar, descompacte e adicione a pasta `bin` ao PATH do Windows |
+| **LibreOffice** | Transformar **DOCX e XLSX em PDF** e usá-los no modo **Juntar** | [libreoffice.org](https://www.libreoffice.org/download/download-libreoffice/) — o FileMorph o encontra sozinho |
+
+Depois de instalar um deles, **feche e abra o FileMorph de novo**.
+
+Para ver o que está disponível no seu computador, clique no botão **⋯** (canto
+superior direito) e em **Diagnóstico e dependências**. A janela mostra o que cada
+programa habilita, tem um botão para a página oficial de download do que estiver
+faltando e um botão **Copiar informações**, útil para pedir ajuda. O FileMorph
+nunca baixa nem instala nada sozinho.
+
+---
+
+## Passo a passo básico
+
+1. **Abra o FileMorph.**
+2. **Adicione os arquivos**: arraste-os para a área tracejada no centro da janela, ou clique nela para escolher os arquivos.
+3. **Escolha o modo** no topo: **CONVERTER**, **JUNTAR** ou **ORGANIZAR**.
+4. **Complete a escolha**: no modo Converter, selecione o formato em **"Converter para"**.
+5. **Clique no botão grande** na parte de baixo da janela.
+6. **Acompanhe o progresso.** Se mudar de ideia, clique em **Cancelar**.
+7. **Pronto!** Uma mensagem mostra onde o resultado foi salvo, com um botão **Abrir pasta** — e, se preferir, a pasta abre sozinha.
+
+---
+
+## Conhecendo a tela principal
+
+De cima para baixo:
+
+- **Cabeçalho** — o botão **⚙** abre as Configurações; o botão **⋯** tem as opções Configurações, Diagnóstico e dependências, Abrir pasta de logs, Ajuda e Sobre (que mostra a versão instalada).
+- **Seletor de modo** — CONVERTER, JUNTAR e ORGANIZAR.
+- **Área de arrastar** — onde você solta os arquivos (ou clica para escolher). O mascote fica aqui e reage ao que está acontecendo.
+- **Lista de arquivos** — cada arquivo aparece com nome, tipo, tamanho e situação:
+  `aguardando`, `processando`, `concluído`, `erro` (com o motivo logo abaixo) ou `cancelado`.
+  O **×** tira um arquivo da lista, e **Limpar tudo** esvazia a lista. Tirar da lista não apaga o arquivo do computador.
+- **Cartão de opções** — no modo Converter, a escolha do formato; no modo Organizar, qual PDF será organizado. Logo abaixo, quando algum arquivo da lista precisa de um programa que não está instalado (um MP3 sem FFmpeg, um DOCX que não vira PDF sem LibreOffice), uma linha avisa o que falta.
+- **Botão principal** — CONVERTER ARQUIVOS, JUNTAR ARQUIVOS ou ORGANIZAR PÁGINAS. Ele fica apagado enquanto a operação não é possível; pare o mouse sobre ele para ver o motivo.
+
+---
+
+## Como usar cada funcionalidade
+
+### Converter arquivos
+
+1. Adicione um ou mais arquivos.
+2. Deixe o modo **CONVERTER** selecionado.
+3. Em **"Converter para"**, escolha o formato.
+4. Clique em **CONVERTER ARQUIVOS**.
+
+O que é bom saber:
+
+- **Arquivos de tipos diferentes na mesma lista:** o seletor só mostra os formatos que servem para **todos** eles. Ex.: com uma foto PNG e um PDF, as opções são PNG, JPG e WEBP.
+- **O nome é mantido**, só muda a extensão: `ferias.jpg` vira `ferias.png`.
+- **Já existe um arquivo com esse nome?** O FileMorph pergunta se deve **Substituir** ou **Criar cópia** (que ganha um número: `ferias (1).png`).
+- **Arquivos com o mesmo nome, de pastas diferentes**, nunca gravam um por cima do outro: `C:\A\foto.jpg` e `C:\B\foto.png` convertidos para WEBP viram `foto.webp` e `foto (1).webp` — inclusive quando são convertidos ao mesmo tempo.
+- **Um arquivo da própria lista nunca é substituído**, nem se você escolher "Substituir": o resultado vira uma cópia numerada.
+- **PDF com várias páginas → imagens:** as imagens vão para uma pasta com o nome do PDF, uma por página (`relatorio/relatorio_p01.png`, `relatorio_p02.png`...).
+- **Planilha com várias abas → CSV:** vira uma pasta com um CSV por aba — inclusive as abas ocultas.
+
+### Juntar arquivos em um PDF
+
+1. Adicione **dois ou mais** arquivos, **na ordem em que devem aparecer** no PDF final.
+2. Selecione o modo **JUNTAR**.
+3. Clique em **JUNTAR ARQUIVOS**.
+4. Escolha o nome e o local do PDF final (a sugestão é `documento_final.pdf`) e confirme.
+
+O que é bom saber:
+
+- **A ordem da lista é a ordem do PDF final.** Os arquivos entram na ordem em que foram adicionados.
+  Para acertar a ordem depois, use o modo **Organizar** no PDF gerado.
+- Pode misturar tipos: PDF, imagens e textos no mesmo documento — e DOCX e XLSX, com o LibreOffice instalado.
+- PDFs protegidos por senha não podem ser juntados.
+- O PDF final **não pode ter o nome de um dos arquivos que estão sendo juntados** (ele seria substituído). Se você escolher um desses nomes, o FileMorph pede outro.
+
+### Organizar as páginas de um PDF
+
+Use para mudar a ordem das páginas de um PDF — por exemplo, colocar a última
+página no começo, ou corrigir um documento digitalizado fora de ordem.
+
+**1. Abra a janela de organização**
+
+1. Deixe **apenas um PDF** na lista de arquivos.
+2. Selecione o modo **ORGANIZAR**. O cartão mostra: *"Organizar as páginas de: relatorio.pdf"*.
+3. Clique em **ORGANIZAR PÁGINAS**.
+
+**2. Entenda cada página**
+
+Cada página aparece como um cartão com a miniatura e dois números:
+
+- **O número em destaque**, no canto da miniatura, é a **posição da página no arquivo novo**. Ele muda enquanto você reorganiza.
+- **"Página 3"**, embaixo, é o **número da página no PDF original**. Ele acompanha a página e fica colorido quando ela sai do lugar — assim você vê de relance o que mudou.
+
+**3. Mude a ordem**
+
+- **Arraste e solte** uma página no lugar desejado. Uma barra colorida mostra onde ela vai entrar.
+  Soltar na metade esquerda de um cartão coloca a página antes dele; na metade direita, depois.
+- **Várias páginas de uma vez:** selecione com **Ctrl** (uma a uma) ou **Shift** (um intervalo) e arraste qualquer uma delas. Elas vão juntas, na mesma ordem.
+- **Documentos grandes:** ao arrastar perto da borda de cima ou de baixo, a lista rola sozinha.
+  Ou use os botões de **Mover seleção** — para o início, uma posição para trás, uma para a frente, para o fim — ou os atalhos **Ctrl+Home**, **Ctrl+←**, **Ctrl+→** e **Ctrl+End**.
+
+**4. Confira antes de salvar**
+
+- Logo abaixo das páginas, a linha **"Nova ordem"** resume o resultado. Ex.: *Nova ordem: 3, 1, 4, 2*.
+  Sequências longas aparecem resumidas: *50, 1–49, 51–100*.
+- **Restaurar ordem original** desfaz tudo e volta ao começo.
+- **Cancelar** fecha a janela sem salvar. Se você já tiver mudado a ordem, o FileMorph pergunta antes de descartar.
+
+**5. Salve**
+
+1. Clique em **Salvar PDF com a nova ordem**.
+2. Escolha o nome e o local. A sugestão é o nome do original com `_reorganizado` no final (ex.: `relatorio_reorganizado.pdf`).
+3. Acompanhe a barra de progresso. No fim, uma mensagem mostra onde o PDF foi salvo.
+
+**O que o FileMorph garante na organização:**
+
+- Nenhuma página é duplicada nem perdida — o arquivo novo tem exatamente as mesmas páginas.
+- A qualidade é a original: as páginas não são convertidas em imagem nem recomprimidas.
+- Marcadores (índice lateral) e links internos do PDF acompanham as páginas.
+- O PDF original continua exatamente como estava.
+
+---
+
+## Exemplos rápidos
+
+**Converter fotos do celular para PNG**
+Arraste as fotos JPG → modo **CONVERTER** → "Converter para" **PNG** → **CONVERTER ARQUIVOS**.
+
+**Transformar um PDF em imagens**
+Arraste o PDF → modo **CONVERTER** → **JPG** → **CONVERTER ARQUIVOS**. Um PDF de 5 páginas vira uma pasta com 5 imagens.
+
+**Montar um documento único para enviar**
+Arraste, nesta ordem, `contrato.pdf`, `rg.jpg` e `comprovante.png` → modo **JUNTAR** → **JUNTAR ARQUIVOS** → salve como `processo.pdf`.
+
+**Reorganizar as páginas de um PDF**
+Um PDF tem as páginas **1, 2, 3, 4** e você quer **3, 1, 4, 2**:
+
+1. Modo **ORGANIZAR** → **ORGANIZAR PÁGINAS**.
+2. Arraste a **página 3** para antes da página 1. Ordem: 3, 1, 2, 4.
+3. Arraste a **página 4** para antes da página 2. Ordem: 3, 1, 4, 2.
+4. Confira *"Nova ordem: 3, 1, 4, 2"* e clique em **Salvar PDF com a nova ordem**.
+
+**Tirar só o áudio de um vídeo** *(precisa do FFmpeg)*
+Arraste o vídeo MP4 → modo **CONVERTER** → **MP3** → **CONVERTER ARQUIVOS**.
+
+**Abrir um CSV no Excel com as colunas certas**
+Arraste o CSV → **CONVERTER** → **XLSX** → **CONVERTER ARQUIVOS**. Códigos com zero à esquerda, como CEP, continuam intactos.
+
+---
+
+## Configurações
+
+Clique no botão **⚙** no canto superior direito.
+
+| Opção | O que faz |
+|---|---|
+| **Pasta padrão** | Onde os arquivos convertidos são salvos. |
+| **Abrir pasta após concluir** | Abre a pasta do resultado quando a operação termina. |
+| **Mostrar mensagens do mascote** | Mostra ou esconde as falas do mascote. |
+| **Animar o mascote** | Liga ou desliga os movimentos do mascote. |
+| **Perguntar antes de substituir arquivos** | Se desligado, arquivos com o mesmo nome são substituídos sem perguntar. |
+| **Processos simultâneos** | Quantos arquivos são convertidos ao mesmo tempo (de 1 a 8). Números maiores terminam lotes mais rápido, mas usam mais o computador. |
+| **Tema** | A aparência da janela: clara ou escura. |
+
+Se o arquivo de configurações for estragado (editado à mão com um valor errado,
+por exemplo), só a opção com problema volta ao valor padrão — as outras continuam
+como você deixou.
+
+---
+
+## Onde ficam os arquivos gerados
+
+| Operação | Onde o resultado é salvo |
+|---|---|
+| **Converter** | Na **pasta padrão** — inicialmente `Documentos\FileMorph\Convertidos`. |
+| **Juntar** | No nome e local que você escolher ao clicar em Juntar. |
+| **Organizar** | No nome e local que você escolher ao salvar. |
+
+---
+
+## Informações importantes e limitações
+
+**Sobre os seus arquivos**
+
+- O original **nunca** é alterado nem apagado.
+- Ao cancelar, nada fica pela metade: o que estava sendo gravado é descartado, e um arquivo que já existia com aquele nome continua intacto.
+- Tudo acontece no seu computador: nenhum arquivo é enviado para a internet.
+
+**Imagens**
+
+- Fotos de celular que aparecem "deitadas" são giradas de verdade no arquivo novo, e a informação de giro sai dos dados da foto — assim ela não é girada duas vezes em outros programas. Data, câmera e localização da foto são mantidas nos formatos JPG e WEBP.
+
+**PDF**
+
+- PDFs **protegidos por senha**, ou com **proteção contra alterações** definida pelo autor, não podem ser organizados nem juntados. Remova a proteção antes.
+- Se o PDF tiver **assinatura digital**, ela não continua válida no arquivo reorganizado — qualquer alteração em um documento assinado invalida a assinatura. O original, com a assinatura, fica guardado como estava.
+- **PDF para imagem** usa 150 dpi, boa resolução para ver na tela. Páginas enormes (plantas, banners) saem com resolução menor, para caber na memória e no limite do formato escolhido — a página sai inteira, nunca cortada.
+- **PDF para TXT** só funciona com PDFs que têm texto. Um documento **digitalizado** é uma foto da página e não tem texto por dentro; o FileMorph não faz reconhecimento de texto (OCR).
+- Se a miniatura de alguma página não puder ser mostrada, o cartão exibe "sem prévia" — a página continua no documento normalmente.
+
+**Documentos e planilhas**
+
+- Converter para **TXT** guarda só o texto: negrito, cores, imagens e formatação não cabem em um arquivo de texto.
+- Um **TXT para PDF** sai em página A4, com fonte de largura fixa. Travessões e aspas "curvas" viram os equivalentes simples (`--` e `"`).
+- O **CSV** é gravado do jeito que o Excel em português espera (separado por ponto e vírgula), para abrir com as colunas certas.
+- Vindo de um CSV, só vira número o que é claramente número: CEPs, códigos com zero à esquerda e datas continuam como texto, para não serem alterados.
+- Ao converter uma planilha para CSV, células com **fórmula** viram o último valor calculado pelo Excel.
+
+**Áudio e vídeo**
+
+- Converter vídeo é demorado: leva mais ou menos o tempo de duração do próprio vídeo. O WEBM é o mais lento.
+- As informações da música (título, artista, álbum) são mantidas; a capa do álbum não.
+
+---
+
+## Dúvidas comuns
+
+**Aparece "Nenhum formato disponível ainda". Por quê?**
+Não existe uma conversão que sirva para todos os arquivos da lista. Isso acontece com formatos ainda sem conversão (BMP, TIFF, GIF), com tipos que não combinam (ex.: um vídeo e uma planilha juntos) ou com áudio e vídeo sem o FFmpeg instalado.
+
+**O botão principal está apagado.**
+Pare o mouse sobre ele para ver o motivo. Os mais comuns: a lista está vazia; no modo Juntar há só um arquivo; no modo Organizar há mais de um arquivo na lista ou o arquivo não é PDF.
+
+**As opções de áudio e vídeo não aparecem.**
+Instale o FFmpeg, feche e abra o FileMorph. Confira em **⋯ → Diagnóstico e dependências**.
+
+**Não aparece a opção PDF para o meu DOCX ou XLSX.**
+Essa conversão precisa do LibreOffice. Instale-o, feche e abra o FileMorph.
+
+**Onde está o arquivo que eu converti?**
+Na pasta padrão, que você vê e muda em **⚙ Configurações** (inicialmente `Documentos\FileMorph\Convertidos`). A mensagem do fim da operação também mostra o local.
+
+**Um arquivo deu erro. O que faço?**
+O motivo aparece logo abaixo do nome, na lista. Se não for suficiente, a opção **⋯ → Abrir pasta de logs** mostra o registro técnico, e **⋯ → Diagnóstico e dependências → Copiar informações** copia a versão do FileMorph, do Windows e dos programas opcionais — útil para quem for ajudar.
+
+**Posso abrir o FileMorph duas vezes?**
+Pode. Cada janela usa os próprios arquivos temporários, e uma não atrapalha a conversão da outra.
+
+**Posso continuar usando o computador enquanto o FileMorph trabalha?**
+Sim. A janela continua respondendo, e o botão **Cancelar** funciona a qualquer momento.
+
+---
+
+## Desinstalar
+
+Abra **Configurações do Windows → Aplicativos → FileMorph → Desinstalar**.
+
+Suas configurações e os arquivos que você já converteu **não** são apagados.
+A versão portátil não se desinstala: basta apagar o arquivo.
+
+---
+
+## Para quem desenvolve o FileMorph
+
+Requer Python 3.12 ou mais novo (64 bits para gerar o instalador).
+
+```bash
+python -m pip install -r requirements-dev.txt   # aplicativo + testes
+python main.py                                  # abre o aplicativo
+python -m pytest                                # toda a suíte
+python -m pytest -m "not integration"           # só os testes unitários
+```
+
+Os testes nunca usam o FFmpeg ou o LibreOffice instalados na máquina (usam
+programas de mentira, em `tests/`), nem as configurações de quem os roda: o
+resultado é o mesmo em qualquer computador. As categorias estão em `pytest.ini`.
+
+**Gerar a versão distribuída** (Windows, PowerShell):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+python -m pip install -r requirements-build.txt -r requirements-dev.txt -c constraints-release.txt
+.\empacotar.ps1              # instalador: dist\installer\FileMorph-<versão>-setup.exe (+ .sha256)
+.\empacotar.ps1 -Portatil    # também o portátil: dist\portable\FileMorph-<versão>-portable.exe
 ```
 
-O `-ExecutionPolicy Bypass` vale só para aquela execução e não altera a
-política da máquina. Sem ele, a política padrão do Windows recusa o
-script mesmo sendo um arquivo local.
+O script roda os testes unitários, empacota com o PyInstaller (`FileMorph.spec`),
+confere que nada de desenvolvimento entrou no pacote, executa o próprio
+`FileMorph.exe --smoke-test` (converte uma imagem, monta um PDF e abre a janela
+sem usar o Python da máquina), monta o instalador com o Inno Setup 6 e calcula o
+SHA-256. Qualquer etapa que falhe encerra com erro. **O arquivo para compartilhar
+é o `setup.exe`**: o `FileMorph.exe` de `dist\FileMorph` depende da pasta ao lado
+dele e não funciona sozinho.
 
-A instalação copia o projeto para `%LOCALAPPDATA%\Programs\FileMorph`,
-cria um ambiente virtual com as dependências e coloca atalhos no Menu
-Iniciar e na Área de Trabalho.
+O workflow `.github/workflows/build-windows.yml` faz o mesmo no GitHub a cada push,
+e numa tag `vX.Y.Z` anexa os arquivos a uma release em rascunho.
 
-O ícone dos atalhos é `assets/icons/filemorph.ico`. Para trocá-lo por
-outra imagem:
+A versão mora só em `app/version.py`. As licenças das bibliotecas distribuídas
+estão em `THIRD_PARTY_LICENSES.md`; para incluir um FFmpeg no instalador, veja
+`vendor/ffmpeg/LEIA-ME.md`. Os instaladores antigos, que rodavam o código-fonte
+com um Python da máquina, estão em `dev/legacy/`.
 
-```bash
-python tools/gerar_icone_de_imagem.py caminho/da/imagem.png
-```
-
-A ferramenta remove o fundo, centra o desenho num quadrado e grava o
-`.ico` com as sete resoluções que o Windows usa (de 16 a 256 px) — um
-`.ico` de tamanho único ficaria borrado na barra de tarefas. Depois é
-só reinstalar: o `install.ps1` lê o arquivo no momento em que cria o
-atalho.
-
-## Distribuindo para outra pessoa
-
-Os dois caminhos acima instalam **a partir do código-fonte** e exigem
-que a máquina de destino tenha Python 3.12+. Para enviar o FileMorph a
-alguém que não tem Python — e mandar um arquivo só —, gere o
-instalador:
-
-```powershell
-.\empacotar.ps1
-```
-
-São dois passos encadeados:
-
-1. O **PyInstaller** empacota o aplicativo e o próprio interpretador
-   Python em `dist/FileMorph/`, conforme o `FileMorph.spec`. Essa pasta
-   já roda sozinha em qualquer Windows.
-2. O **Inno Setup** embrulha essa pasta em
-   `dist/installer/FileMorph-<versão>-setup.exe`, conforme o
-   `installer/FileMorph.iss`. É esse arquivo, de cerca de 50 MB, que se
-   envia.
-
-O `setup.exe` instala sem pedir privilégio de administrador, cria os
-atalhos, registra o programa em Configurações > Aplicativos e gera o
-próprio desinstalador. Nada disso precisa do `install.ps1` nem do
-`desinstalar.ps1`, que continuam servindo à instalação a partir do
-código-fonte.
-
-O segundo passo é opcional: sem o Inno Setup instalado, o script avisa
-e para depois do executável, que já pode ser zipado e enviado.
-
-```powershell
-.\empacotar.ps1 -SomenteExe   # pula o instalador
-.\empacotar.ps1 -SemLimpar    # reaproveita a build anterior, mais rápido
-```
-
-Para instalar o Inno Setup: `winget install JRSoftware.InnoSetup`.
-
-O FFmpeg e o LibreOffice continuam sendo dependências externas nos dois
-caminhos — eles não são embutidos no `setup.exe`, que ficaria com
-centenas de megabytes por causa de conversões que a maioria das pessoas
-não usa. Sem o FFmpeg, áudio e vídeo não aparecem no seletor de formato;
-sem o LibreOffice, "PDF" não aparece para um DOCX nem para um XLSX. Todo
-o resto funciona na máquina de destino sem instalar mais nada.
-
-## Desinstalando
-
-Configurações > Aplicativos > FileMorph > Desinstalar, nos dois casos.
-
-As suas configurações (`%APPDATA%\FileMorph`) e os arquivos já
-convertidos (`Documentos\FileMorph\Convertidos`) **não** são apagados:
-foram criados pelo aplicativo em tempo de execução, não pelo
-instalador. Reinstalar depois reaproveita tudo.
-
-## Instalação (ambiente de desenvolvimento)
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate      # Windows
-pip install -r requirements.txt
-```
-
-## Executando
-
-Pelo terminal:
-
-```bash
-python main.py
-```
-
-Ou, sem terminal nenhum: **dê um duplo clique em `FileMorph.bat`**, na
-raiz do projeto. Ele entra sozinho na pasta certa, usa o `.venv` se
-existir (senão o `python`/`py` do sistema), instala as dependências na
-primeira execução caso o PySide6 ou o Pillow ainda não estejam
-disponíveis e abre a janela. Se algo der errado, a janela do console fica aberta explicando o
-motivo em vez de sumir.
-
-Se preferir sem nenhuma janela de console à vista, use o
-`FileMorph (sem console).vbs`, ao lado dele. Ele chama o mesmo
-`FileMorph.bat` com a janela escondida — a lógica de encontrar o Python
-e instalar dependências continua num lugar só. A diferença é que um
-erro aparece numa caixa de mensagem do Windows em vez de num console
-que ninguém viu abrir.
-
-## Arquitetura
-
-```
-FileMorph/
-├── main.py                  # ponto de entrada
-├── tools/                   # utilitários de desenvolvimento, fora do app
-│   ├── gerar_mascote.py     # desenha o mascote e o ícone (pixel art)
-│   ├── gerar_icones_tipos.py # gera os ícones de tipo de arquivo (SVG)
-│   ├── gerar_icone_de_imagem.py # vira o .ico do atalho a partir de
-│   │                          uma imagem qualquer
-│   └── preparar_mascote.py  # limpa o fundo de uma imagem trazida de fora
-├── app/
-│   ├── core/                # lógica central: conversão, junção, fila,
-│   │                          validação — nada de UI aqui
-│   ├── converters/          # um módulo por família de formato, todos
-│   │                          implementados: image, pdf, audio, video,
-│   │                          document e spreadsheet
-│   │                          (media_converter.py é a base comum de
-│   │                          áudio/vídeo; document_converter.py traz
-│   │                          a que a planilha também usa)
-│   ├── mergers/             # um módulo por família de junção;
-│   │                          pdf_merger.py implementado (PDFs,
-│   │                          imagens, documentos e planilhas em um
-│   │                          único PDF)
-│   ├── ui/                  # janelas e widgets PySide6
-│   ├── utils/                # logging, arquivos temporários, ffmpeg,
-│   │                          libreoffice, utilitários de arquivo
-│   └── config/               # configurações persistidas do usuário
-└── assets/                  # ícone do app, mascote e os ícones de
-                             # tipo de arquivo
-    └── icons/filetypes/     # o ícone que cada arquivo mostra na lista,
-                               um arquivo por extensão. Um `<ext>.png`
-                               colocado aqui substitui o `<ext>.svg`
-                               gerado, sem apagar nada nem mexer no
-                               código.
-```
-
-A UI nunca conversa diretamente com Pillow/pypdf/FFmpeg etc. Ela passa
-por `app/core/processor.py`, que consulta a camada de compatibilidade
-(`app/core/converter.py` / `app/core/merger.py`) para saber o que é
-realmente possível, e delega a execução para o conversor/merger
-registrado. Os dois únicos lugares do projeto que criam um processo
-externo são `app/utils/ffmpeg_manager.py` e
-`app/utils/libreoffice_manager.py`: cada um detecta o seu programa,
-executa a conversão, acompanha o que dá para acompanhar e traduz um erro
-técnico em uma frase em português. Nenhum conversor chama `subprocess`
-por conta própria.
-
-Quem preenche essa camada são `app/converters/__init__.py` e
-`app/mergers/__init__.py`, chamados uma única vez no `main.py`. Eles só
-registram um conversor/merger se a dependência dele estiver de fato
-presente — é assim que a interface continua honesta em uma máquina sem
-Pillow, sem PyMuPDF ou sem LibreOffice, por exemplo.
-
-## Identidade visual e mascote
-
-O tema tem três variantes (claro, escuro, sistema) e uma paleta só, em
-`app/ui/styles.py`. As cores saem do mascote — são os tons do sprite —
-com os papéis separados: **o rosa pastel é superfície** (fundos, área de
-arrastar) e **o ameixa saturado é interação** (botões, progresso, foco).
-O campo `on_accent` existe porque os dois temas discordam sobre o texto
-em cima do destaque: branco no claro, ameixa no escuro, onde o botão é
-rosa claro.
-
-A arte é gerada por código, não editada em um programa de imagem:
-
-```bash
-python tools/gerar_mascote.py
-```
-
-Isso reescreve `assets/icons/filemorph.ico` (com 16, 32, 48, 64, 128 e
-256 px) e `assets/mascot/ditto.png`. Silhueta, cores e rosto são números
-no topo do script, então ajustar a arte é editar texto — e a diferença
-entre duas versões aparece no diff. Os dois tamanhos pequenos são
-desenhados em separado de propósito: reduzir a arte de 32 px pela metade
-quebra o contorno, porque detalhe de um pixel não sobrevive à divisão.
-
-**Trocando o mascote.** Nada disso é obrigatório. A janela usa
-`assets/mascot/ditto.png` e, se ele não existir, a primeira imagem que
-encontrar na pasta — então jogar um PNG ali dentro já funciona, com o
-nome que for, **e a animação da Fase 8 funciona com ele igual**, porque
-ela deforma a imagem em vez de depender de quadros desenhados. Um GIF
-animado também serve, e nesse caso os quadros dele são reproduzidos. O
-ícone do atalho é o que estiver em `assets/icons/filemorph.ico`. Se a
-imagem sumir, o aplicativo abre normalmente, apenas sem a figura.
-
-Vale passar a imagem pelo preparador antes:
-
-```bash
-python tools/preparar_mascote.py caminho/da/imagem.png
-```
-
-Ele existe por um motivo prático. Pixel art baixada da internet quase
-sempre vem salva como JPEG (às vezes com extensão `.png`, o que
-engana), e JPEG não tem canal de transparência: o xadrez cinza que o
-editor desenha para *representar* o fundo transparente acaba gravado
-como pixel de verdade. Posta direto na janela, a imagem aparece com um
-tabuleiro em volta — gritante no tema escuro. O preparador remove o
-fundo por saturação (o xadrez é cinza; o contorno preto do desenho é
-escuro e sobrevive ao teste), recorta a margem morta e grava um PNG com
-transparência de verdade em `assets/mascot/ditto.png`.
-
-## Configuração e logs
-
-- Configurações do usuário: arquivo JSON em uma pasta de dados do
-  aplicativo (`%APPDATA%/FileMorph` no Windows), gerenciado por
-  `app/config/settings.py`.
-- Logs técnicos: pasta `logs/` dentro da mesma pasta de dados,
-  gerenciados por `app/utils/logger.py`. O usuário comum não precisa
-  olhar esse arquivo — ele existe para diagnóstico.
-
-## Testes
-
-```bash
-python -m pytest tests
-```
-
-A suíte cobre a camada de compatibilidade, a validação de arquivos, a
-contabilidade da fila de tarefas, as conversões de imagem, de PDF e de
-documento, a junção, as conversões de áudio/vídeo e o
-progresso/cancelamento — tudo de verdade, gerando os arquivos na hora e
-conferindo o resultado (inclusive a ordem das páginas do PDF final, os
-acentos que sobrevivem a cada conversão e o fato de que cancelar não
-deixa sobras). Não depende de arquivos externos nem de rede.
-
-A animação do mascote também é testada, apesar de o resultado dela ser
-visual: a parte que decide *como* ele se move é função pura
-(`pose_for`), então os testes verificam as invariantes que o olho só
-notaria por acidente — que o movimento conserva a área da figura, que
-ele cabe na folga que o widget reserva (senão o mascote aparece cortado
-no ponto mais alto de um pulo) e que toda reação termina devolvendo o
-mascote ao repouso. Nada disso abre janela.
-
-As exceções são os dois programas externos, que não são bibliotecas
-Python: exigi-los instalados transformaria metade da suíte em "pulado"
-para quem só quer rodar os testes. No lugar deles entram
-`tests/fake_ffmpeg.py` e `tests/fake_soffice.py`, programas que imitam a
-parte do FFmpeg e do LibreOffice que o FileMorph usa de fato — o
-primeiro responde a `-encoders`, publica blocos de progresso e grava o
-arquivo de saída; o segundo responde ao `--convert-to` gravando um PDF
-na pasta indicada, e sabe reproduzir o caso traiçoeiro em que o
-LibreOffice termina com sucesso sem ter gravado nada. Assim o código
-exercitado é o de produção (leitura do andamento, encerramento do
-processo, tradução do erro, gravação atômica), e a única peça falsa é o
-programa do outro lado do cano.
-
-## Próximos passos
-
-Todas as fases do roteiro original estão entregues — o que vem daqui
-para frente é ampliação, não plano pendente. Resumidamente:
-
-- **Ainda em imagens**: BMP, TIFF e GIF, que ficaram fora da Fase 3 por
-  exigirem tratamento próprio (paleta e animação).
-- **Ainda em mídia**: opções de qualidade escolhidas pelo usuário
-  (hoje cada formato tem um perfil fixo, pensado para o uso comum) e
-  corte por trecho.
-- **Ainda em documentos**: PDF → DOCX, que é o caminho mais difícil de
-  todos (reconstruir parágrafos e tabelas a partir de posições de texto
-  numa página), e ODT/RTF como origem, que o LibreOffice já saberia ler.
-- **Ainda em planilhas**: ODS como origem (também via LibreOffice) e
-  CSV → PDF, que hoje exige passar pelo XLSX no meio.
+Os detalhes técnicos de cada parte estão documentados no início de cada arquivo do código, em `app/`.

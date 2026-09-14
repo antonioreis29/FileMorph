@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Seta das caixas de escolha (QComboBox), no tema escuro: a cor de texto secundário. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">
+  <path d="M2.6 4.4 L6 7.8 L9.4 4.4" fill="none" stroke="#B9A5B8"
+        stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,5 +1,5 @@
 """
-Testes do conversor de imagens da Fase 3 (item 34 do briefing).
+Testes do conversor de imagens.
 
 Diferente de `test_compatibility.py`, que usa dobras de teste, estes
 testes exercitam a conversão de verdade: criam imagens pequenas com
@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("PIL", reason="Pillow é a dependência do conversor de imagens")
 
 # Importados depois do `importorskip` porque puxam Pillow junto.
-from PIL import Image  # noqa: E402
+from PIL import ExifTags, Image, ImageCms  # noqa: E402
 
 from app.converters import register_builtin_converters  # noqa: E402
 from app.converters.image_converter import ImageConverter  # noqa: E402
@@ -162,6 +162,106 @@ def test_existing_output_survives_a_failed_conversion(tmp_path: Path) -> None:
     assert destination.read_bytes() == good_bytes
 
 
+def test_refuses_to_write_over_the_source(tmp_path: Path) -> None:
+    """Chamado direto (sem o planejamento do processador), o conversor ainda
+    recusa um destino que é a própria origem."""
+    source = _make_png(tmp_path / "figura.png")
+    original_bytes = source.read_bytes()
+
+    result = ImageConverter().convert(str(source), str(tmp_path / "FIGURA.png"))
+
+    assert not result.success
+    assert source.read_bytes() == original_bytes
+    assert [p.name for p in tmp_path.iterdir()] == ["figura.png"]
+
+
+# --- Orientação EXIF ---------------------------------------------------------------
+
+_ORIENTATION = ExifTags.Base.Orientation
+
+
+def _make_rotated_photo(path: Path, with_icc: bool = True) -> Path:
+    """Uma "foto de celular": pixels deitados (40x20) e a tag dizendo que a
+    imagem deve ser girada 90° (Orientation = 6), com câmera, data e GPS."""
+    exif = Image.Exif()
+    exif[_ORIENTATION] = 6
+    exif[ExifTags.Base.Make] = "Camera de Teste"
+    exif[ExifTags.Base.Model] = "Modelo X"
+    exif[ExifTags.Base.DateTime] = "2024:05:06 07:08:09"
+    exif.get_ifd(ExifTags.IFD.Exif)[ExifTags.Base.DateTimeOriginal] = "2024:05:06 07:08:09"
+    gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+    gps[ExifTags.GPS.GPSLatitudeRef] = "S"
+    gps[ExifTags.GPS.GPSLatitude] = (23.0, 32.0, 51.0)
+    options = {"exif": exif.tobytes()}
+    if with_icc:
+        options["icc_profile"] = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    Image.new("RGB", (40, 20), (200, 30, 60)).save(path, format="JPEG", **options)
+    return path
+
+
+@pytest.mark.parametrize("target", ["jpg", "webp"])
+def test_exif_orientation_is_applied_once(tmp_path: Path, target: str) -> None:
+    """Os pixels são girados, e a tag de orientação sai do arquivo novo.
+
+    Se a tag ficasse, a imagem já de pé seria girada de novo por qualquer
+    visualizador que respeita o EXIF — a foto apareceria deitada.
+    """
+    source = _make_rotated_photo(tmp_path / "celular.jpg")
+    destination = tmp_path / f"convertida.{target}"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.size == (20, 40)
+        exif = image.getexif()
+        assert exif.get(_ORIENTATION, 1) == 1
+        # O resto do EXIF continua sendo o da foto.
+        assert exif.get(ExifTags.Base.Make) == "Camera de Teste"
+        assert exif.get(ExifTags.Base.Model) == "Modelo X"
+        assert exif.get(ExifTags.Base.DateTime) == "2024:05:06 07:08:09"
+        assert (
+            exif.get_ifd(ExifTags.IFD.Exif).get(ExifTags.Base.DateTimeOriginal)
+            == "2024:05:06 07:08:09"
+        )
+        gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+        assert gps.get(ExifTags.GPS.GPSLatitudeRef) == "S"
+        assert tuple(float(v) for v in gps.get(ExifTags.GPS.GPSLatitude)) == (23.0, 32.0, 51.0)
+        assert image.info.get("icc_profile")
+
+
+def test_orientation_from_the_source_is_never_copied_back(tmp_path: Path) -> None:
+    """Conferência direta das opções de gravação: a origem ainda tem a tag,
+    as opções que saem para o arquivo novo não."""
+    from app.converters.image_converter import save_options
+
+    source = _make_rotated_photo(tmp_path / "celular.jpg")
+    with Image.open(source) as image:
+        assert image.getexif().get(_ORIENTATION) == 6
+        options = save_options(image, "jpg")
+
+    written = Image.Exif()
+    written.load(options["exif"])
+    assert _ORIENTATION not in written
+    assert written.get(ExifTags.Base.Make) == "Camera de Teste"
+
+
+def test_icc_profile_is_dropped_when_the_color_space_changes(tmp_path: Path) -> None:
+    """Um perfil de CMYK não descreve um PNG que virou RGB."""
+    source = tmp_path / "grafica.jpg"
+    Image.new("CMYK", (10, 10), (0, 50, 100, 0)).save(
+        source, format="JPEG", icc_profile=b"perfil CMYK de mentira"
+    )
+    destination = tmp_path / "grafica.png"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.mode == "RGB"
+        assert not image.info.get("icc_profile")
+
+
 def test_register_builtin_converters_populates_registry() -> None:
     registry = CompatibilityRegistry()
 
@@ -170,9 +270,9 @@ def test_register_builtin_converters_populates_registry() -> None:
     assert registered  # com Pillow instalado, o conversor de imagens entra
     assert registry.can_convert("png", "webp")
     assert registry.can_convert("jpeg", "png")
-    # Formatos de outras fases continuam indisponíveis, e a interface
+    # Formatos sem conversor continuam indisponíveis, e a interface
     # depende disso para não oferecer conversões inexistentes. (PNG -> PDF
-    # passou a existir na Fase 4 e é coberto em test_pdf_converter.py.)
+    # é coberto em test_pdf_converter.py.)
     assert not registry.can_convert("png", "docx")
     assert not registry.can_convert("mp4", "mp3")
 

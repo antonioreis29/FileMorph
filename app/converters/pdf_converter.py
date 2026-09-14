@@ -1,5 +1,5 @@
 """
-Conversores de PDF (FASE 4 do briefing).
+Conversores de PDF.
 
 Duas direções, cada uma em sua classe, porque são operações bem
 diferentes por dentro:
@@ -9,20 +9,28 @@ diferentes por dentro:
   para renderizar, Pillow para gravar com as mesmas regras de qualidade
   usadas no conversor de imagens).
 
-Como no Fase 3, a interface não sabe qual biblioteca está por trás:
+Como nas imagens, a interface não sabe qual biblioteca está por trás:
 ela só pede "converta este arquivo para .pdf" e recebe de volta um
-`ConversionResult` (item 4).
+`ConversionResult`.
 
 Sobre PDFs com várias páginas: um PDF de página única vira exatamente
 o arquivo pedido. Um PDF com várias páginas viraria dezenas de
 arquivos soltos na pasta de saída, então as páginas vão para uma
 subpasta com o nome do documento (`relatorio/relatorio_p01.png`, ...).
 Se já existir uma pasta com esse nome, uma nova é criada com sufixo
-numérico, para nunca sobrescrever um resultado anterior (item 21).
+numérico, para nunca sobrescrever um resultado anterior.
+
+Sobre páginas enormes: a rasterização normal é a 150 dpi, mas uma
+página fora do comum (banner, planta de engenharia, PDF malformado que
+declara uma página de metros) geraria uma imagem de centenas de milhões
+de pixels. Nesses casos a resolução é reduzida até a imagem caber num
+teto de memória e no maior lado que o formato de destino aceita gravar
+(ver `render_zoom`).
 """
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 
@@ -34,14 +42,15 @@ from app.converters.image_converter import (
     has_alpha,
     save_options,
 )
-from app.core.converter import BaseConverter, ConversionResult
+from app.core.converter import BaseConverter, ConversionResult, refuse_overwriting_source
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.file_utils import (
+    create_unique_directory,
+    discard_partial_outputs,
     ensure_directory,
     get_extension,
     get_filename,
     get_stem,
-    get_unique_path,
     temp_output_path,
 )
 from app.utils.logger import get_logger
@@ -71,6 +80,18 @@ IMAGE_TARGET_FORMATS: set[str] = {"png", "jpg", "webp"}
 # termo entre legibilidade (dá para ler texto pequeno) e tamanho de
 # arquivo — 300 dpi quadruplica os bytes sem ganho perceptível na tela.
 PDF_RENDER_DPI = 150
+
+# Teto de pixels de uma página rasterizada. Uma página A0 a 150 dpi dá
+# uns 35 milhões de pixels e ainda passa inteira; acima de 50 milhões a
+# memória vira o problema — a imagem existe duas vezes durante a
+# gravação (a do PyMuPDF e a cópia do Pillow), a 3 bytes por pixel.
+MAX_RENDER_PIXELS = 50_000_000
+
+# Maior lado, em pixels, que cada formato consegue gravar. O WEBP tem um
+# limite duro de 16383 px, e acima dele o Pillow recusa a gravação — o
+# que chegava ao usuário como "erro inesperado" numa página comprida. O
+# JPEG vai até 65500 px; o PNG não tem limite que importe aqui.
+_MAX_SIDE_BY_FORMAT: dict[str, int] = {"webp": 16383, "jpg": 65500, "jpeg": 65500}
 
 # Resolução assumida ao criar um PDF a partir de uma imagem que não
 # declara DPI. 72 dpi faz a página do PDF ter exatamente o tamanho da
@@ -103,6 +124,35 @@ def _resolution_for(image: Image.Image) -> float:
         if _MIN_RESOLUTION <= value <= _MAX_RESOLUTION:
             return value
     return DEFAULT_IMAGE_RESOLUTION
+
+
+def render_zoom(page_width: float, page_height: float, target_ext: str) -> float:
+    """Fator de ampliação (pontos -> pixels) para rasterizar uma página.
+
+    O normal é `PDF_RENDER_DPI / 72`. Só uma página fora do comum sai
+    com menos: o fator é reduzido até a imagem caber em
+    `MAX_RENDER_PIXELS` e no maior lado que o formato de destino aceita.
+    A página continua inteira — perde resolução, não conteúdo.
+
+    O limite de lado mira um pixel abaixo do máximo porque o PyMuPDF
+    arredonda o tamanho da imagem para cima: mirar no próprio máximo
+    deixaria a imagem, às vezes, um pixel acima dele.
+    """
+    zoom = PDF_RENDER_DPI / 72
+    width = max(page_width, 1.0)
+    height = max(page_height, 1.0)
+
+    pixels = width * height * zoom * zoom
+    if pixels > MAX_RENDER_PIXELS:
+        zoom *= math.sqrt(MAX_RENDER_PIXELS / pixels)
+
+    max_side = _MAX_SIDE_BY_FORMAT.get(target_ext)
+    if max_side is not None:
+        longest = max(width, height) * zoom
+        if longest > max_side - 1:
+            zoom *= (max_side - 1) / longest
+
+    return zoom
 
 
 def _prepare_page(image: Image.Image) -> Image.Image:
@@ -149,6 +199,9 @@ class ImageToPdfConverter(BaseConverter):
             return _failure(
                 input_path, f"O arquivo '{get_filename(source)}' não foi encontrado."
             )
+        refused = refuse_overwriting_source(input_path, output_path)
+        if refused is not None:
+            return refused
 
         temp_output: Path | None = None
         try:
@@ -235,9 +288,16 @@ class PdfToImageConverter(BaseConverter):
             return _failure(
                 input_path, f"O arquivo '{get_filename(source)}' não foi encontrado."
             )
+        refused = refuse_overwriting_source(input_path, output_path)
+        if refused is not None:
+            return refused
 
         document = None
         written: list[Path] = []
+        # A subpasta nova de um PDF de várias páginas. Guardada à parte, e
+        # não deduzida de `written`, porque uma falha antes da primeira
+        # página precisa removê-la mesmo sem nenhum arquivo gravado.
+        created_folder: Path | None = None
         try:
             try:
                 document = pymupdf.open(source)
@@ -259,10 +319,10 @@ class PdfToImageConverter(BaseConverter):
             if page_count == 0:
                 return _failure(input_path, f"'{get_filename(source)}' não tem páginas.")
 
-            targets = self._page_destinations(destination, page_count)
+            created_folder, targets = self._page_destinations(destination, page_count)
             for page_number, page_destination in enumerate(targets):
                 # Entre uma página e outra é o ponto seguro para parar:
-                # nada fica gravado pela metade (item 17).
+                # nada fica gravado pela metade.
                 context.check_cancelled()
                 self._render_page(document, page_number, page_destination, target_ext)
                 written.append(page_destination)
@@ -271,22 +331,22 @@ class PdfToImageConverter(BaseConverter):
         except OperationCancelled:
             # Cancelamento não é falha: as páginas já escritas são
             # descartadas e a fila trata o resto.
-            self._discard(written)
+            discard_partial_outputs(written, created_folder)
             raise
         except PermissionError:
-            self._discard(written)
+            discard_partial_outputs(written, created_folder)
             return _failure(
                 input_path,
                 "Sem permissão para gravar na pasta de destino. "
                 "Escolha outra pasta nas configurações.",
             )
         except OSError as exc:
-            self._discard(written)
+            discard_partial_outputs(written, created_folder)
             logger.exception("Erro de sistema ao converter PDF %s", input_path)
             detail = getattr(exc, "strerror", None) or str(exc)
             return _failure(input_path, f"Não foi possível gravar as imagens ({detail}).")
         except Exception:  # noqa: BLE001 — a UI nunca deve receber um traceback
-            self._discard(written)
+            discard_partial_outputs(written, created_folder)
             logger.exception("Falha inesperada ao converter PDF %s", input_path)
             return _failure(
                 input_path,
@@ -308,21 +368,25 @@ class PdfToImageConverter(BaseConverter):
         produced = written[0] if len(written) == 1 else written[0].parent
         return ConversionResult(success=True, input_path=input_path, output_path=str(produced))
 
-    def _page_destinations(self, destination: Path, page_count: int) -> list[Path]:
-        """Onde cada página vai ser gravada.
+    def _page_destinations(
+        self, destination: Path, page_count: int
+    ) -> tuple[Path | None, list[Path]]:
+        """Onde cada página vai ser gravada, e a subpasta criada para elas.
 
         Uma página: exatamente o caminho pedido, que já passou pelo
-        fluxo de conflito de nomes da interface. Várias páginas: uma
-        subpasta nova com o nome do documento."""
+        fluxo de conflito de nomes da interface, e nenhuma pasta nova.
+        Várias páginas: uma subpasta nova com o nome do documento, que
+        volta junto para que uma falha consiga removê-la."""
         if page_count == 1:
             ensure_directory(destination.parent)
-            return [destination]
+            return None, [destination]
 
         stem = get_stem(destination)
-        folder = get_unique_path(destination.parent / stem)
-        ensure_directory(folder)
+        # Criada de forma atômica: dois PDFs do mesmo lote convertidos em
+        # paralelo nunca acabam dividindo a mesma pasta.
+        folder = create_unique_directory(destination.parent / stem)
         width = max(2, len(str(page_count)))
-        return [
+        return folder, [
             folder / f"{stem}_p{number:0{width}d}{destination.suffix}"
             for number in range(1, page_count + 1)
         ]
@@ -330,7 +394,18 @@ class PdfToImageConverter(BaseConverter):
     def _render_page(
         self, document, page_number: int, destination: Path, target_ext: str
     ) -> None:
-        pixmap = document[page_number].get_pixmap(dpi=PDF_RENDER_DPI)
+        page = document[page_number]
+        zoom = render_zoom(page.rect.width, page.rect.height, target_ext)
+        if zoom < PDF_RENDER_DPI / 72:
+            logger.info(
+                "Página %d grande demais para %d dpi; rasterizada a %.0f dpi",
+                page_number + 1,
+                PDF_RENDER_DPI,
+                zoom * 72,
+            )
+        # Matriz, e não `dpi=`: o PyMuPDF só aceita dpi inteiro, e o fator
+        # reduzido de uma página enorme quase nunca é.
+        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
         mode = "RGBA" if pixmap.alpha else "RGB"
         image = Image.frombytes(mode, (pixmap.width, pixmap.height), pixmap.samples)
         if target_ext in ("jpg", "jpeg") and has_alpha(image):
@@ -345,19 +420,3 @@ class PdfToImageConverter(BaseConverter):
         except BaseException:
             temp_output.unlink(missing_ok=True)
             raise
-
-    @staticmethod
-    def _discard(written: list[Path]) -> None:
-        """Uma conversão que falhou no meio não deixa páginas soltas pela
-        metade na pasta do usuário — nem a subpasta vazia que as abrigava."""
-        folders = {path.parent for path in written}
-        for path in written:
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:  # pragma: no cover — arquivo em uso, por exemplo
-                logger.warning("Não foi possível remover a página parcial %s", path)
-        for folder in folders:
-            try:
-                folder.rmdir()  # só remove se tiver ficado vazia
-            except OSError:
-                pass

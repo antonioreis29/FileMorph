@@ -1,5 +1,5 @@
 """
-O mascote da janela principal: carregamento e animação (FASE 8).
+O mascote da janela principal: carregamento e animação.
 
 Fica no lado da UI, e não em `app/utils/`, porque depende de Qt — o
 pacote `utils` é mantido livre de Qt para que os conversores possam ser
@@ -58,7 +58,7 @@ from PySide6.QtGui import QMovie, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from app.utils.logger import get_logger
-from app.utils.resources import MASCOT_PATH, get_asset, get_assets_dir
+from app.utils.resources import MASCOT_DIR, get_assets_dir, get_mascot_file
 
 logger = get_logger("ui.mascot")
 
@@ -228,13 +228,17 @@ def pose_for(state: MascotState, elapsed: float) -> Pose:
 
 
 def find_mascot_file() -> Path | None:
-    """O arquivo do mascote: `ditto.png` se existir, senão a primeira
-    imagem que estiver na pasta."""
-    preferido = get_asset(*MASCOT_PATH)
+    """O arquivo do mascote: um `ditto.*` se existir, senão a primeira
+    imagem que estiver na pasta.
+
+    Entre os `ditto.*`, quem decide é a ordem de
+    `resources.MASCOT_EXTENSOES`, onde o animado vence o parado.
+    """
+    preferido = get_mascot_file()
     if preferido is not None:
         return preferido
 
-    pasta = get_assets_dir() / MASCOT_PATH[0]
+    pasta = get_assets_dir() / MASCOT_DIR
     if not pasta.is_dir():
         return None
 
@@ -243,8 +247,9 @@ def find_mascot_file() -> Path | None:
     )
     if candidatos:
         logger.info(
-            "Usando '%s' como mascote (renomeie para ditto.png para fixar a escolha).",
+            "Usando '%s' como mascote (renomeie para ditto%s para fixar a escolha).",
             candidatos[0].name,
+            candidatos[0].suffix.lower(),
         )
         return candidatos[0]
     return None
@@ -264,7 +269,7 @@ def load_mascot_sprite(height: int) -> tuple[Path, QPixmap] | None:
     caminho = find_mascot_file()
     if caminho is None:
         logger.info(
-            "Nenhuma imagem em assets/%s — a janela abre sem o mascote.", MASCOT_PATH[0]
+            "Nenhuma imagem em assets/%s — a janela abre sem o mascote.", MASCOT_DIR
         )
         return None
 
@@ -311,15 +316,43 @@ class MascotWidget(QWidget):
             self.hide()
             return
 
-        self.setFixedSize(
-            round(self._sprite.width() * (1 + 2 * _SIDEROOM)),
-            round(self._sprite.height() * (1 + _HEADROOM)),
-        )
+        self._height = height
+        self._source = arte[0]
+        self._resize_to_sprite()
         self._setup_movie(arte[0])
 
         self._timer = QTimer(self)
         self._timer.setInterval(_FRAME_MS)
         self._timer.timeout.connect(self._advance)
+
+    def _resize_to_sprite(self) -> None:
+        """O widget é a figura mais a folga para ela se mexer."""
+        self.setFixedSize(
+            round(self._sprite.width() * (1 + 2 * _SIDEROOM)),
+            round(self._sprite.height() * (1 + _HEADROOM)),
+        )
+
+    def set_height(self, height: int) -> None:
+        """Redesenha o mascote em outra altura.
+
+        Serve ao modo compacto da área de arrastar: com arquivos na
+        lista, o mascote continua presente, só menor, para devolver
+        espaço à lista. A arte é recarregada do disco em vez de o
+        pixmap existente ser reescalado, porque reescalar duas vezes
+        (uma no carregamento, outra aqui) acumula perda — e o pixel
+        art é justamente o tipo de arte em que isso aparece.
+        """
+        if self._sprite is None or height == self._height:
+            return
+        arte = load_mascot_sprite(height)
+        if arte is None:  # pragma: no cover — a arte sumiu do disco em tempo de execução
+            return
+        self._height = height
+        self._sprite = arte[1]
+        self._resize_to_sprite()
+        if self._movie is not None:
+            self._movie.setScaledSize(self._sprite.size())
+        self.update()
 
     # --- Arte animada ----------------------------------------------------
 

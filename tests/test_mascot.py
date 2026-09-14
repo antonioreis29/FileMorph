@@ -1,5 +1,5 @@
 """
-Testes da animação do mascote da Fase 8 (item 34 do briefing).
+Testes da animação do mascote.
 
 Animação é difícil de testar porque o resultado é visual — mas a parte
 que decide *como* o mascote se move é função pura (`pose_for`), e é ela

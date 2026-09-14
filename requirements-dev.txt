@@ -1,0 +1,9 @@
+# FileMorph — ambiente de desenvolvimento (rodar os testes)
+#
+#     python -m pip install -r requirements-dev.txt
+#     python -m pytest                          # toda a suíte
+#     python -m pytest -m "not integration"     # só os testes unitários
+
+-r requirements.txt
+
+pytest>=8.0.0

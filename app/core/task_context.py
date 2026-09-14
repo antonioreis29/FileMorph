@@ -1,10 +1,10 @@
 """
-Canal de mão dupla entre uma tarefa e a fila (FASE 5, itens 16 e 17).
+Canal de mão dupla entre uma tarefa e a fila.
 
-Até a Fase 4, uma conversão era uma caixa-preta: começava, terminava, e
-no meio disso a interface não sabia de nada nem tinha como pedir para
-parar. O progresso avançava de arquivo em arquivo, e cancelar só
-impedia que as tarefas *seguintes* começassem.
+Sem este canal, uma conversão seria uma caixa-preta: começa, termina, e
+no meio disso a interface não sabe de nada nem tem como pedir para
+parar. O progresso avançaria de arquivo em arquivo, e cancelar só
+impediria que as tarefas *seguintes* começassem.
 
 `TaskContext` resolve os dois lados com um objeto só, entregue pela
 fila a cada tarefa:
@@ -32,7 +32,7 @@ class OperationCancelled(Exception):
     """Levantada de dentro de uma tarefa quando o usuário cancelou.
 
     Não é um erro: a fila a reconhece e trata a tarefa como cancelada,
-    sem mostrar mensagem de falha para o usuário (item 17).
+    sem mostrar mensagem de falha para o usuário.
     """
 
 

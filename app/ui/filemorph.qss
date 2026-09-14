@@ -1,0 +1,598 @@
+/*
+ * Folha de estilo do FileMorph (Qt Style Sheets).
+ *
+ * É um modelo: cada marcador com cifrão e chaves é trocado pela cor do
+ * tema em uso por `build_stylesheet`, em app/ui/styles.py. As cores não
+ * moram aqui, moram na `Palette` — este arquivo só diz onde cada uma é
+ * usada. Os tons translúcidos chegam prontos (error_tint_16 é o vermelho
+ * de erro a 16%), e as duas regras de imagem (check_image_rule e
+ * arrow_image_rule) chegam vazias quando a arte não está instalada.
+ *
+ * Os comentários ao lado das regras explicam por que cada uma existe.
+ */
+
+QWidget {
+    background-color: ${background};
+    color: ${text_primary};
+    font-family: ${font_family};
+    font-size: 13px;
+}
+
+QMainWindow, QDialog {
+    background-color: ${background};
+}
+
+/* Ver "Duas regras" no topo de app/ui/styles.py: rótulo não pinta fundo. */
+QLabel {
+    background: transparent;
+}
+
+QLabel:disabled {
+    color: ${text_secondary};
+}
+
+QToolTip {
+    background-color: ${surface};
+    color: ${text_primary};
+    border: 1px solid ${border};
+    border-radius: 8px;
+    padding: 6px 9px;
+}
+
+/* --- Cabeçalho ---------------------------------------------------- */
+
+QLabel#titleLabel {
+    font-size: 19px;
+    font-weight: 800;
+}
+
+QLabel#taglineLabel {
+    color: ${text_secondary};
+    font-size: 11px;
+}
+
+/* Título de seção: pequeno, espaçado e em maiúsculas, para separar
+   blocos sem precisar de uma linha divisória a mais. */
+QLabel#sectionLabel {
+    color: ${text_secondary};
+    font-size: 11px;
+    font-weight: 800;
+}
+
+QLabel#countBadge {
+    background-color: ${accent_soft};
+    color: ${text_primary};
+    border-radius: 8px;
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+QLabel#dropTitle {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+/* Na faixa compacta o convite deixa de ser o assunto da tela e
+   passa a ser uma legenda: mesmo texto, menos peso. */
+QLabel#dropTitle[compact="true"] {
+    font-size: 12px;
+    font-weight: 600;
+    color: ${text_secondary};
+}
+
+QLabel#hintLabel {
+    color: ${text_secondary};
+    font-size: 12px;
+}
+
+QLabel#mascotLabel {
+    color: ${text_secondary};
+    font-size: 13px;
+    font-style: italic;
+}
+
+/* --- Botões -------------------------------------------------------- */
+
+QPushButton {
+    background-color: ${surface_alt};
+    color: ${text_primary};
+    border: 1px solid transparent;
+    border-radius: 14px;
+    padding: 8px 18px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: ${border};
+}
+
+QPushButton:focus {
+    border-color: ${accent};
+}
+
+QPushButton:disabled {
+    color: ${text_secondary};
+}
+
+QPushButton#primaryButton {
+    background-color: ${accent};
+    color: ${on_accent};
+    border-radius: 22px;
+    padding: 15px 28px;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+QPushButton#primaryButton:hover {
+    background-color: ${accent_hover};
+}
+
+QPushButton#primaryButton:pressed {
+    background-color: ${accent_pressed};
+}
+
+QPushButton#primaryButton:disabled {
+    background-color: ${surface_alt};
+    color: ${text_secondary};
+}
+
+QPushButton#primaryButton:focus {
+    border-color: ${text_primary};
+}
+
+/* Botão redondo só de símbolo, no cabeçalho. Sem fundo em repouso
+   para não competir com o botão principal — a superfície aparece
+   apenas sob o cursor. */
+QPushButton#iconButton {
+    /* A fonte de símbolos do Windows desenha a engrenagem e as
+       reticências em traço monocromático. Sem isto o Qt cai na
+       fonte de emoji e a engrenagem vira um desenho colorido, que
+       num botão de 32 px lê como uma mancha. */
+    font-family: "Segoe UI Symbol", "Segoe UI", sans-serif;
+    font-size: 16px;
+    background-color: transparent;
+    color: ${text_secondary};
+    border-radius: 16px;
+    padding: 0px;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 32px;
+    max-height: 32px;
+}
+
+/* O botão de menu não mostra a setinha que o Qt desenha por
+   padrão em botão com menu: o símbolo já diz o que ele faz, e a
+   seta desequilibraria o círculo. */
+QPushButton#iconButton::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
+QPushButton#iconButton:hover {
+    background-color: ${surface_alt};
+    color: ${text_primary};
+}
+
+/* Ação secundária discreta ("Limpar"): peso de link, não de botão. */
+QPushButton#linkButton {
+    background-color: transparent;
+    color: ${text_secondary};
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QPushButton#linkButton:hover {
+    background-color: ${surface_alt};
+    color: ${accent};
+}
+
+/* --- Seletor de modo (Converter / Juntar / Organizar) --------------- */
+
+/* Os botões vivem dentro de uma cápsula. Sem ela, um modo não
+   selecionado ficava sem nenhuma moldura e parecia texto solto ao
+   lado de um botão, em vez de outra parte do mesmo controle. */
+QFrame#modeSwitch {
+    background-color: ${surface_alt};
+    border: 1px solid ${border};
+    border-radius: 19px;
+}
+
+QPushButton#modeButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 15px;
+    padding: 8px 26px;
+    font-weight: 800;
+    font-size: 12px;
+    color: ${text_secondary};
+}
+
+QPushButton#modeButton:hover:!checked {
+    color: ${text_primary};
+}
+
+QPushButton#modeButton:checked {
+    background-color: ${accent};
+    color: ${on_accent};
+}
+
+/* --- Área de arrastar ---------------------------------------------- */
+
+QFrame#dropArea {
+    background-color: ${surface};
+    border: 2px dashed ${border};
+    border-radius: 18px;
+}
+
+QFrame#dropArea:hover {
+    border-color: ${accent};
+}
+
+QFrame#dropArea[dragActive="true"] {
+    border: 2px dashed ${accent};
+    background-color: ${surface_alt};
+}
+
+/* --- Cards de arquivo ----------------------------------------------- */
+
+QFrame#fileCard {
+    background-color: ${surface};
+    border-radius: 14px;
+    border: 1px solid ${border};
+}
+
+QFrame#fileCard:hover {
+    background-color: ${surface_alt};
+}
+
+QLabel#cardIcon {
+    font-size: 17px;
+}
+
+QLabel#cardName {
+    font-weight: 600;
+}
+
+/* Extensão e tamanho, na segunda linha do card: informação de apoio,
+   que antes só existia no tooltip e portanto não existia para quem
+   não passa o mouse. */
+QLabel#cardMeta {
+    color: ${text_secondary};
+    font-size: 11px;
+}
+
+QLabel#cardError {
+    color: ${error};
+    font-size: 11px;
+}
+
+/* O status muda de cor conforme o estado. A propriedade dinamica
+   'status' e trocada em file_list.py; as cores ficam aqui, junto
+   do resto da paleta, em vez de espalhadas pelo codigo da UI.
+   Cada estado e uma pilula tingida da propria cor (ver `tint`): a
+   cor sozinha, em texto de 10px, era pouco para se ler de relance. */
+QLabel#cardStatus {
+    font-size: 10px;
+    font-weight: 800;
+    border-radius: 9px;
+    padding: 3px 9px;
+}
+
+QLabel#cardStatus[status="waiting"] {
+    color: ${text_secondary};
+    background-color: ${surface_alt};
+}
+
+QLabel#cardStatus[status="processing"] {
+    color: ${accent};
+    background-color: ${accent_tint_16};
+}
+
+QLabel#cardStatus[status="done"] {
+    color: ${success};
+    background-color: ${success_tint_16};
+}
+
+QLabel#cardStatus[status="error"] {
+    color: ${error};
+    background-color: ${error_tint_16};
+}
+
+QLabel#cardStatus[status="cancelled"] {
+    color: ${warning};
+    background-color: ${warning_tint_18};
+}
+
+QPushButton#cardRemove {
+    background-color: transparent;
+    color: ${text_secondary};
+    border: none;
+    border-radius: 13px;
+    padding: 0px;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QPushButton#cardRemove:hover {
+    background-color: ${error_tint_16};
+    color: ${error};
+}
+
+/* --- Blocos de superfície ------------------------------------------- */
+
+/* O seletor de formato e o progresso moram em cartões da mesma
+   família dos cards de arquivo, para a coluna inteira ler como uma
+   pilha de blocos, e não como controles soltos sobre o fundo. */
+QFrame#formatCard, QFrame#progressCard, QFrame#organizeCard {
+    background-color: ${surface};
+    border: 1px solid ${border};
+    border-radius: 16px;
+}
+
+QScrollArea, QScrollArea > QWidget > QWidget {
+    background-color: transparent;
+    border: none;
+}
+
+/* --- Campos ---------------------------------------------------------- */
+
+QComboBox {
+    background-color: ${background};
+    border: 1px solid ${border};
+    border-radius: 12px;
+    padding: 8px 12px;
+    min-height: 18px;
+    font-weight: 600;
+}
+
+QComboBox:hover, QComboBox:focus {
+    border-color: ${accent};
+}
+
+QComboBox:disabled {
+    color: ${text_secondary};
+    background-color: ${surface_alt};
+    font-weight: 400;
+    font-style: italic;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    border: none;
+    width: 26px;
+}
+
+/* A seta que diz "isto abre uma lista". Estilizar o `::drop-down`
+   apaga a seta nativa do Windows, e sem ela a caixa parecia um campo
+   de texto qualquer. Ver `arrow_asset` na paleta. */
+QComboBox::down-arrow {
+    ${arrow_image_rule}
+    width: 12px;
+    height: 12px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: ${surface};
+    border-radius: 10px;
+    border: 1px solid ${border};
+    padding: 4px;
+    outline: none;
+    selection-background-color: ${accent};
+    selection-color: ${on_accent};
+}
+
+QComboBox QAbstractItemView::item {
+    border-radius: 8px;
+    padding: 6px 8px;
+    min-height: 22px;
+}
+
+/* O item em destaque na lista aberta — que, ao abrir, é o formato já
+   escolhido. Com a regra `::item` acima, o estilo do Windows 11 pinta
+   o próprio realce, quase transparente, e usa por cima a cor de texto
+   de seleção do QSS: no tema claro isso dava texto branco sobre fundo
+   branco, e o formato escolhido aparecia como uma linha vazia no meio
+   da lista. Fundo e texto definidos juntos aqui valem em qualquer
+   estilo. */
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {
+    background-color: ${accent};
+    color: ${on_accent};
+}
+
+QLineEdit, QSpinBox {
+    background-color: ${surface};
+    border: 1px solid ${border};
+    border-radius: 11px;
+    padding: 7px 11px;
+    selection-background-color: ${accent};
+    selection-color: ${on_accent};
+}
+
+QLineEdit:focus, QSpinBox:focus {
+    border-color: ${accent};
+}
+
+QCheckBox {
+    spacing: 9px;
+}
+
+/* Linha de 1px que separa o corpo de um diálogo da fileira de
+   botões. É um QFrame sem conteúdo, e não uma borda de outro
+   widget, para poder ter margem dos dois lados. */
+QFrame#divider {
+    background-color: ${border};
+    border: none;
+}
+
+QCheckBox::indicator {
+    width: 17px;
+    height: 17px;
+    border-radius: 6px;
+    border: 2px solid ${border};
+    background-color: ${surface};
+}
+
+QCheckBox::indicator:hover {
+    border-color: ${accent};
+}
+
+QCheckBox::indicator:checked {
+    background-color: ${accent};
+    border-color: ${accent};
+    ${check_image_rule}
+}
+
+/* --- Progresso -------------------------------------------------------- */
+
+QProgressBar {
+    background-color: ${accent_soft};
+    border: none;
+    border-radius: 6px;
+    max-height: 12px;
+    min-height: 12px;
+}
+
+QProgressBar::chunk {
+    background-color: ${accent};
+    border-radius: 6px;
+}
+
+QLabel#progressStatus {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QLabel#progressPercent {
+    color: ${accent};
+    font-size: 12px;
+    font-weight: 800;
+}
+
+QPushButton#cancelButton {
+    background-color: ${background};
+    padding: 6px 16px;
+    font-size: 12px;
+}
+
+QPushButton#cancelButton:hover {
+    background-color: ${error_tint_16};
+    color: ${error};
+}
+
+/* --- Organizar páginas ------------------------------------------------ */
+
+/* A grade de páginas mora num bloco com a mesma borda dos outros. Os
+   cards são pintados pelo delegate (page_organizer_dialog.py), com as
+   cores desta mesma paleta, e ficam sobre o fundo da janela. */
+QListView#pageGrid {
+    background-color: ${background};
+    border: 1px solid ${border};
+    border-radius: 16px;
+    padding: 6px;
+    outline: none;
+}
+
+/* "Abrindo o documento…" e, se ele não abrir, o motivo — no espaço
+   onde a grade apareceria. */
+QLabel#pageMessage {
+    color: ${text_secondary};
+    font-size: 13px;
+    padding: 24px;
+}
+
+QLabel#pageMessage[error="true"] {
+    color: ${error};
+    font-weight: 600;
+}
+
+/* O resumo da ordem ganha a cor de destaque quando a ordem mudou: é a
+   confirmação, em uma linha, do que vai ser gravado. */
+QLabel#orderSummary {
+    color: ${text_secondary};
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QLabel#orderSummary[modified="true"] {
+    color: ${accent};
+}
+
+/* --- Rolagem ---------------------------------------------------------- */
+
+/* Sem setas nas pontas e sem calha pintada: o que aparece é só a
+   alça, e só quando há o que rolar. */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: ${border};
+    border-radius: 5px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: ${text_secondary};
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background: ${border};
+    border-radius: 5px;
+    min-width: 30px;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0px;
+    height: 0px;
+    border: none;
+    background: transparent;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* --- Menus e diálogos --------------------------------------------------- */
+
+QMenu {
+    background-color: ${surface};
+    border: 1px solid ${border};
+    border-radius: 12px;
+    padding: 6px;
+}
+
+QMenu::item {
+    padding: 7px 18px;
+    border-radius: 8px;
+}
+
+QMenu::item:selected {
+    background-color: ${surface_alt};
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: ${border};
+    margin: 5px 8px;
+}
+
+QMessageBox QLabel {
+    color: ${text_primary};
+}
+
+QMessageBox QPushButton, QDialog QPushButton {
+    min-width: 88px;
+}

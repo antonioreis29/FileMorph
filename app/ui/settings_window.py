@@ -1,21 +1,25 @@
 """
-Janela de configurações (item 26 do briefing).
+Janela de configurações.
 
 Expõe: pasta padrão de saída, abrir pasta ao concluir, mensagens do
 mascote, animações, confirmação antes de substituir, número de
-processos simultâneos e tema. Persiste via `SettingsManager`.
+processos simultâneos e tema. Persiste via `SettingsManager`, que confere
+cada valor antes de gravar.
 """
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -33,8 +37,20 @@ class SettingsWindow(QDialog):
         settings = settings_manager.settings
 
         layout = QVBoxLayout(self)
+        # Respiro nas bordas: o diálogo nasce colado nos cantos, e a
+        # janela principal (que tem margens de 20px) faz o contraste
+        # saltar aos olhos assim que os dois aparecem juntos.
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(18)
+
         form = QFormLayout()
-        form.setSpacing(12)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(13)
+        # Rótulo alinhado à esquerda e centrado na altura do campo: com o
+        # alinhamento padrão do Windows (à direita) os rótulos ficavam em
+        # uma escada, cada um começando em uma coluna diferente.
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         # Pasta padrão
         folder_row = QHBoxLayout()
@@ -78,8 +94,15 @@ class SettingsWindow(QDialog):
         form.addRow("Tema:", self._theme_combo)
 
         layout.addLayout(form)
+        layout.addStretch()
+
+        divisor = QFrame()
+        divisor.setObjectName("divider")
+        divisor.setFixedHeight(1)
+        layout.addWidget(divisor)
 
         buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(10)
         cancel_button = QPushButton("Cancelar")
         cancel_button.clicked.connect(self.reject)
         save_button = QPushButton("Salvar")
@@ -96,13 +119,25 @@ class SettingsWindow(QDialog):
             self._folder_edit.setText(folder)
 
     def _save_and_close(self) -> None:
-        self._manager.update(
-            output_folder=self._folder_edit.text(),
-            open_folder_after_finish=self._open_folder_check.isChecked(),
-            show_mascot_messages=self._mascot_check.isChecked(),
-            animations_enabled=self._animations_check.isChecked(),
-            ask_before_overwrite=self._ask_overwrite_check.isChecked(),
-            max_concurrent_tasks=self._concurrent_spin.value(),
-            theme=self._theme_combo.currentData(),
-        )
+        try:
+            self._manager.update(
+                output_folder=self._folder_edit.text(),
+                open_folder_after_finish=self._open_folder_check.isChecked(),
+                show_mascot_messages=self._mascot_check.isChecked(),
+                animations_enabled=self._animations_check.isChecked(),
+                ask_before_overwrite=self._ask_overwrite_check.isChecked(),
+                max_concurrent_tasks=self._concurrent_spin.value(),
+                theme=self._theme_combo.currentData(),
+            )
+        except OSError as exc:
+            # A gravação é atômica: o arquivo anterior continua inteiro, e a
+            # janela fica aberta para o usuário tentar de novo.
+            QMessageBox.warning(
+                self,
+                "Não foi possível salvar",
+                "As configurações não puderam ser gravadas "
+                f"({getattr(exc, 'strerror', None) or exc}). Nada foi perdido: "
+                "as configurações anteriores continuam valendo.",
+            )
+            return
         self.accept()

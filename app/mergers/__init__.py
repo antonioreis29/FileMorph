@@ -1,5 +1,5 @@
 """
-Registro dos mergers concretos disponíveis (FASE 4).
+Registro dos mergers concretos disponíveis.
 
 Espelha `app/converters/__init__.py`: é o único lugar que sabe quais
 junções existem de fato, e só registra as que têm sua biblioteca
@@ -13,6 +13,7 @@ from __future__ import annotations
 import weakref
 
 from app.core.merger import MergeCompatibilityRegistry, merge_compatibility_registry
+from app.utils.libreoffice_manager import LibreOfficeManager
 from app.utils.logger import get_logger
 
 logger = get_logger("mergers")
@@ -25,11 +26,14 @@ _registered_into: weakref.WeakSet[MergeCompatibilityRegistry] = weakref.WeakSet(
 
 def register_builtin_mergers(
     registry: MergeCompatibilityRegistry | None = None,
+    *,
+    libreoffice: LibreOfficeManager | None = None,
 ) -> list[str]:
     """Registra todos os mergers implementados e disponíveis.
 
     Retorna os nomes dos mergers registrados, para log e diagnóstico. É
-    idempotente, e aceita um registro isolado para os testes.
+    idempotente, e aceita um registro isolado e um LibreOffice de mentira
+    para os testes.
     """
     target = registry if registry is not None else merge_compatibility_registry
 
@@ -45,7 +49,7 @@ def register_builtin_mergers(
         logger.warning("Junção de PDFs indisponível (%s).", exc)
     else:
         if PYPDF_AVAILABLE:
-            target.register(PdfMerger())
+            target.register(PdfMerger(libreoffice))
             registered.append("PdfMerger (pypdf)")
         else:
             logger.warning(

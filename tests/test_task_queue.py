@@ -1,11 +1,11 @@
 """
-Testes da fila de tarefas (item 34 do briefing).
+Testes da fila de tarefas.
 
 Verificam a contabilidade da fila, que é o que garante que a interface
 saiba quando o lote acabou — inclusive quando o usuário cancela no
 meio. Sem isso, a barra de progresso ficaria presa para sempre.
 
-Desde a Fase 5 verificam também o `TaskContext`: toda tarefa o recebe
+Verificam também o `TaskContext`: toda tarefa o recebe
 como primeiro argumento, e é por ele que uma tarefa longa reporta
 andamento e é interrompida no meio.
 
@@ -125,7 +125,7 @@ def test_task_reports_progress_through_the_context(qt_app: QCoreApplication) -> 
 
 
 def test_running_task_stops_at_its_next_safe_point(qt_app: QCoreApplication) -> None:
-    """O cancelamento da Fase 5 alcança a tarefa que já está rodando: ela
+    """O cancelamento alcança a tarefa que já está rodando: ela
     enxerga o pedido pelo contexto e para no meio do próprio trabalho."""
     queue = TaskQueue(max_concurrent=1)
     started = threading.Event()

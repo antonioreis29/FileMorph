@@ -1,11 +1,9 @@
 """
-Testes da junção de arquivos da Fase 4, ampliados na Fase 7
-(itens 12, 13 e 34 do briefing).
+Testes da junção de arquivos.
 
 Verificam o que mais importa numa junção: que o resultado tenha todas
 as páginas, **na ordem em que o usuário as colocou**, que formatos
-diferentes possam ser misturados — imagens e, desde a Fase 7, também
-documentos — e que os arquivos intermediários da conversão não fiquem
+diferentes possam ser misturados — imagens e também documentos — e que os arquivos intermediários da conversão não fiquem
 para trás.
 """
 
@@ -60,6 +58,11 @@ def _make_png(path: Path, width: int = 200) -> Path:
     return path
 
 
+def _temp_sessions() -> set[Path]:
+    """As sessões temporárias desta execução (o arquivo de trava não conta)."""
+    return {p for p in temp_manager.instance_dir.iterdir() if p.is_dir()}
+
+
 def _page_widths(path: Path) -> list[int]:
     with pymupdf.open(path) as document:
         return [round(page.rect.width) for page in document]
@@ -78,7 +81,7 @@ def test_merges_two_pdfs_in_order(tmp_path: Path) -> None:
 
 
 def test_input_order_defines_page_order(tmp_path: Path) -> None:
-    """Item 12: a ordem da lista determina a ordem do arquivo final."""
+    """A ordem da lista determina a ordem do arquivo final."""
     first = _make_pdf(tmp_path / "a.pdf", width=100)
     second = _make_pdf(tmp_path / "b.pdf", width=300)
 
@@ -99,7 +102,7 @@ def test_merges_images_into_a_single_pdf(tmp_path: Path) -> None:
 
 
 def test_mixes_pdfs_and_images(tmp_path: Path) -> None:
-    """Item 13: formatos diferentes na mesma junção, via conversão
+    """Formatos diferentes na mesma junção, via conversão
     intermediária das imagens."""
     pdf = _make_pdf(tmp_path / "contrato.pdf", width=100)
     imagem = _make_png(tmp_path / "anexo.png", width=300)
@@ -112,7 +115,7 @@ def test_mixes_pdfs_and_images(tmp_path: Path) -> None:
 
 
 def test_mixes_a_text_file_into_the_merge(tmp_path: Path) -> None:
-    """Fase 7: um .txt também vira página, pelo mesmo pipeline das imagens."""
+    """Um .txt também vira página, pelo mesmo pipeline das imagens."""
     pdf = _make_pdf(tmp_path / "capa.pdf", width=100)
     texto = tmp_path / "anotacoes.txt"
     texto.write_text("uma anotação qualquer\n", encoding="utf-8")
@@ -126,10 +129,11 @@ def test_mixes_a_text_file_into_the_merge(tmp_path: Path) -> None:
         assert "uma anotação qualquer" in document[1].get_text()
 
 
+@pytest.mark.integration
 def test_mixes_a_docx_into_the_merge(tmp_path: Path) -> None:
-    """Fase 7: o .docx passa pelo LibreOffice antes de ser concatenado.
+    """O .docx passa pelo LibreOffice antes de ser concatenado.
 
-    É o segundo exemplo de pipeline do item 13 — e a ordem do documento
+    É o segundo exemplo de conversão intermediária — e a ordem do documento
     final continua sendo a ordem da lista.
     """
     pdf = _make_pdf(tmp_path / "capa.pdf", width=100)
@@ -144,8 +148,9 @@ def test_mixes_a_docx_into_the_merge(tmp_path: Path) -> None:
     assert _page_widths(destination) == [100, 333]
 
 
+@pytest.mark.integration
 def test_mixes_a_spreadsheet_into_the_merge(tmp_path: Path) -> None:
-    """Fase 9: a planilha entra na junção pelo mesmo caminho do .docx."""
+    """A planilha entra na junção pelo mesmo caminho do .docx."""
     pdf = _make_pdf(tmp_path / "capa.pdf", width=100)
     planilha = tmp_path / "vendas.xlsx"
     planilha.write_bytes(b"o fake_soffice nao le a planilha, so a converte")
@@ -158,8 +163,9 @@ def test_mixes_a_spreadsheet_into_the_merge(tmp_path: Path) -> None:
     assert _page_widths(destination) == [100, 222]
 
 
+@pytest.mark.integration
 def test_office_formats_are_only_accepted_when_libreoffice_exists() -> None:
-    """Sem LibreOffice, .docx e .xlsx não entram na junção (item 37).
+    """Sem LibreOffice, .docx e .xlsx não entram na junção.
 
     Aceitá-los e falhar no meio seria pior: o usuário já teria escolhido
     o nome do arquivo final e esperado a conversão dos demais.
@@ -178,16 +184,14 @@ def test_office_formats_are_only_accepted_when_libreoffice_exists() -> None:
 
 
 def test_temporary_files_are_cleaned_up(tmp_path: Path) -> None:
-    """Item 24: os PDFs intermediários das imagens não podem ficar
+    """Os PDFs intermediários das imagens não podem ficar
     acumulando na máquina do usuário."""
     imagens = [_make_png(tmp_path / f"foto{i}.png") for i in range(2)]
-    temp_root = Path(temp_manager.session_dir("x")).parent
-    before = set(temp_root.glob("*")) if temp_root.exists() else set()
+    before = _temp_sessions()
 
     PdfMerger().merge([str(p) for p in imagens], str(tmp_path / "album.pdf"))
 
-    after = set(temp_root.glob("*")) if temp_root.exists() else set()
-    assert after == before
+    assert _temp_sessions() == before
 
 
 def test_sources_are_never_modified(tmp_path: Path) -> None:
@@ -199,6 +203,43 @@ def test_sources_are_never_modified(tmp_path: Path) -> None:
 
     assert pdf.read_bytes() == pdf_bytes
     assert imagem.read_bytes() == imagem_bytes
+
+
+@pytest.mark.parametrize("which", [0, 1, 2])
+def test_merge_never_replaces_an_input(tmp_path: Path, which: int) -> None:
+    """Juntar a.pdf, b.pdf e c.pdf salvando por cima de qualquer um deles
+    terminaria trocando o original pelo resultado. A junção é recusada, os
+    três continuam byte a byte iguais e nenhum temporário fica para trás."""
+    inputs = [
+        _make_pdf(tmp_path / "a.pdf", width=100),
+        _make_png(tmp_path / "b.png", width=200),
+        _make_pdf(tmp_path / "c.pdf", width=300),
+    ]
+    before = {p: p.read_bytes() for p in inputs}
+    temp_before = _temp_sessions()
+    files_before = set(tmp_path.iterdir())
+
+    result = PdfMerger().merge([str(p) for p in inputs], str(inputs[which]))
+
+    assert not result.success
+    assert inputs[which].name in (result.error_message or "")
+    assert {p: p.read_bytes() for p in inputs} == before
+    assert set(tmp_path.iterdir()) == files_before  # nenhum temporário de gravação
+    assert _temp_sessions() == temp_before  # nenhuma sessão intermediária
+
+
+@pytest.mark.windows
+@pytest.mark.skipif(sys.platform != "win32", reason="nomes sem distinção de maiúsculas são do Windows")
+def test_merge_never_replaces_an_input_spelled_differently(tmp_path: Path) -> None:
+    first = _make_pdf(tmp_path / "Contrato.pdf", width=100)
+    second = _make_pdf(tmp_path / "anexo.pdf", width=300)
+    original = first.read_bytes()
+    other_spelling = str(tmp_path / "CONTRATO.PDF").replace("\\", "/")
+
+    result = PdfMerger().merge([str(first), str(second)], other_spelling)
+
+    assert not result.success
+    assert first.read_bytes() == original
 
 
 def test_missing_file_fails_before_writing_anything(tmp_path: Path) -> None:
@@ -257,21 +298,42 @@ def test_existing_output_survives_a_failed_merge(tmp_path: Path) -> None:
     assert destination.read_bytes() == good_bytes
 
 
+class _NoLibreOffice:
+    def is_available(self) -> bool:
+        return False
+
+
 def test_registered_merger_answers_the_compatibility_layer() -> None:
     registry = MergeCompatibilityRegistry()
 
-    registered = register_builtin_mergers(registry)
+    registered = register_builtin_mergers(registry, libreoffice=_NoLibreOffice())
 
     assert registered
     assert registry.can_merge(["pdf", "pdf"])
     assert registry.can_merge(["png", "jpg", "pdf"])
     assert registry.can_merge(["png", "png"], target_ext="pdf")
     assert registry.can_merge(["pdf", "txt"])
-    # O .docx e o .xlsx dependem do LibreOffice estar nesta máquina.
-    disponivel = libreoffice_manager.is_available()
-    assert registry.can_merge(["pdf", "docx"]) == disponivel
-    assert registry.can_merge(["pdf", "xlsx"]) == disponivel
+    # Sem LibreOffice, .docx e .xlsx ficam de fora.
+    assert not registry.can_merge(["pdf", "docx"])
+    assert not registry.can_merge(["pdf", "xlsx"])
     # O que não tem conversão para PDF continua sem junção disponível.
     assert not registry.can_merge(["mp3", "mp3"])
     assert not registry.can_merge(["mp4", "pdf"])
     assert register_builtin_mergers(registry) == []  # idempotente
+
+
+@pytest.mark.integration
+def test_registered_merger_accepts_office_files_with_libreoffice() -> None:
+    registry = MergeCompatibilityRegistry()
+
+    register_builtin_mergers(registry, libreoffice=_fake_libreoffice())
+
+    assert registry.can_merge(["pdf", "docx"])
+    assert registry.can_merge(["pdf", "xlsx"])
+
+
+def test_the_suite_never_detects_a_real_libreoffice() -> None:
+    """A trava de `conftest.py`: o LibreOffice global responde "ausente" em
+    todo teste, esteja ele instalado nesta máquina ou não."""
+    assert not libreoffice_manager.is_available()
+    assert "docx" not in PdfMerger().accepted_formats

@@ -1,7 +1,7 @@
 """
-Validação de extensões de arquivo (item 8: "validar extensões").
+Validação de extensões de arquivo.
 
-Esta lista reflete os formatos *mencionados* no briefing como alvo do
+Esta lista reflete os formatos que o FileMorph tem como alvo do
 projeto (para que o drag-and-drop já saiba reconhecer um PNG ou um
 MP4, por exemplo), mas isso é independente de já existir ou não um
 conversor implementado para eles — essa segunda pergunta é respondida
@@ -63,7 +63,7 @@ def validate_paths(paths: list[str]) -> tuple[list[str], list[str]]:
 
     Um caminho é válido quando existe no disco, é um arquivo (não uma
     pasta) e tem extensão conhecida. Arquivos inválidos devem gerar
-    uma mensagem clara na UI (item 8), nunca ser adicionados
+    uma mensagem clara na UI, nunca ser adicionados
     silenciosamente nem travar a aplicação.
     """
     valid: list[str] = []

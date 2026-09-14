@@ -1,10 +1,9 @@
 """
-Testes de app.core.converter / app.core.merger (item 34 do briefing).
+Testes de app.core.converter / app.core.merger.
 
 Usa um conversor/merger falso (double de teste) para verificar a
 lógica do registro de compatibilidade sem depender de Pillow, pypdf
-ou qualquer biblioteca externa — o próprio briefing pede que nenhuma
-conversão real exista ainda nas Fases 1-2.
+ou qualquer biblioteca externa.
 """
 
 from __future__ import annotations

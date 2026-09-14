@@ -1,5 +1,5 @@
 """
-Conversores de documentos (FASE 7 do briefing).
+Conversores de documentos.
 
 Cinco caminhos, cada um em sua classe, porque cada um depende de uma
 coisa diferente e precisa poder ser oferecido (ou não) por conta própria:
@@ -15,8 +15,8 @@ seletor de formato numa máquina sem LibreOffice (ver
 `app/utils/libreoffice_manager.py` para o porquê de não tentarmos
 paginar um DOCX em Python).
 
-Duas peças daqui são reaproveitadas pelo conversor de planilhas da
-Fase 9 (`spreadsheet_converter.py`), porque planilha e documento têm
+Duas peças daqui são reaproveitadas pelo conversor de planilhas
+(`spreadsheet_converter.py`), porque planilha e documento têm
 exatamente o mesmo roteiro por dentro: `DocumentConverter`, que é o
 esqueleto da conversão (temporário, erro traduzido, cancelamento), e
 `LibreOfficeToPdfConverter`, que é o caminho para o programa externo.
@@ -37,16 +37,19 @@ dos formatos, não uma limitação do FileMorph:
 A gravação é atômica nos cinco casos: o conteúdo vai para um arquivo
 temporário ao lado do destino e só então é movido para o nome
 definitivo. Uma falha no meio nunca deixa arquivo truncado nem destrói
-um arquivo bom que já ocupasse aquele nome (item 18).
+um arquivo bom que já ocupasse aquele nome.
 """
 
 from __future__ import annotations
 
+import codecs
+import io
 import shutil
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
-from app.core.converter import BaseConverter, ConversionResult
+from app.core.converter import BaseConverter, ConversionResult, refuse_overwriting_source
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.file_utils import (
     ensure_directory,
@@ -76,7 +79,7 @@ except ImportError:  # pragma: no cover — depende do ambiente
 
 DOCX_AVAILABLE = docx is not None
 
-# O mesmo PyMuPDF do conversor de PDF da Fase 4. A tentativa em dois
+# O mesmo PyMuPDF do conversor de PDF. A tentativa em dois
 # nomes se repete aqui (em vez de importar do outro módulo) para que
 # TXT → PDF não passe a depender do Pillow por tabela.
 try:  # PyMuPDF >= 1.24 expõe o nome novo; versões antigas, só o antigo.
@@ -170,18 +173,21 @@ class ConversionProblem(Exception):
     `_MergeInputError` tem na junção.
 
     O nome não é privado porque faz parte do contrato da classe base: o
-    conversor de planilhas (Fase 9) herda de `DocumentConverter` a partir
+    conversor de planilhas herda de `DocumentConverter` a partir
     de outro módulo, e é levantando esta exceção que ele reporta um
     problema ao usuário.
     """
 
 
 def read_text_file(path: str | Path) -> str:
-    """Lê um arquivo de texto tentando as codificações mais prováveis.
+    """Lê um arquivo de texto inteiro, tentando as codificações mais prováveis.
 
     Um .txt não declara em que codificação foi gravado, então não há
     como saber: o que dá para fazer é tentar na ordem do mais provável
     e parar na primeira que decodificar o arquivo inteiro sem erro.
+
+    Carrega o arquivo todo na memória; as conversões usam `TextReader`,
+    que lê aos poucos.
     """
     path = Path(path)
     data = path.read_bytes()
@@ -194,6 +200,89 @@ def read_text_file(path: str | Path) -> str:
     raise ConversionProblem(  # pragma: no cover
         f"Não foi possível identificar a codificação de '{get_filename(path)}'."
     )
+
+
+# Tamanho dos pedaços lidos ao conferir a codificação de um arquivo grande.
+_ENCODING_PROBE_CHUNK = 1 << 20
+
+
+def detect_text_encoding(path: str | Path) -> str:
+    """A codificação de um arquivo de texto, pelas mesmas regras de
+    `read_text_file`, mas sem carregá-lo na memória.
+
+    Olhar só o começo do arquivo não bastaria: um CSV exportado por um
+    sistema antigo pode ter mil linhas sem acento nenhum e um "ã" em cp1252
+    na milésima primeira. Tomado por UTF-8 a partir da amostra, ele quebraria
+    no meio da conversão. Por isso cada codificação candidata é conferida
+    no arquivo inteiro, em pedaços de 1 MB — sempre o mesmo pouco de
+    memória, qualquer que seja o tamanho do arquivo.
+    """
+    path = Path(path)
+    for encoding in TEXT_ENCODINGS[:-1]:
+        decoder = codecs.getincrementaldecoder(encoding)()
+        try:
+            with open(path, "rb") as handle:
+                while chunk := handle.read(_ENCODING_PROBE_CHUNK):
+                    decoder.decode(chunk)
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            continue
+        return encoding
+    # O latin-1 decodifica qualquer sequência de bytes.
+    return TEXT_ENCODINGS[-1]
+
+
+class TextReader:
+    """Um arquivo de texto aberto para ser lido aos poucos.
+
+    Serve às conversões que partem de texto (TXT, CSV) e que antes liam o
+    arquivo inteiro de uma vez: um arquivo de centenas de megabytes ocupava
+    a memória várias vezes — os bytes, o texto decodificado, a lista de
+    linhas — antes de a primeira linha ser convertida.
+
+    O andamento é medido em bytes já lidos (`percent_read`): saber quantas
+    linhas o arquivo tem exigiria lê-lo inteiro antes de começar.
+
+    `newline` segue a regra de `open`: `None` junta as quebras de linha do
+    Windows e do Linux, e `""` entrega as linhas intactas, que é o que o
+    módulo `csv` precisa.
+    """
+
+    def __init__(
+        self, path: str | Path, newline: str | None = None, encoding: str | None = None
+    ) -> None:
+        self._path = Path(path)
+        self.encoding = encoding or detect_text_encoding(self._path)
+        self._size = max(1, self._path.stat().st_size)
+        self._newline = newline
+        self._raw = None
+        self._text = None
+
+    def __enter__(self) -> "TextReader":
+        self._raw = open(self._path, "rb")
+        self._text = io.TextIOWrapper(self._raw, encoding=self.encoding, newline=self._newline)
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        if self._text is not None:
+            self._text.close()
+
+    @property
+    def handle(self):
+        """O arquivo aberto em modo texto."""
+        return self._text
+
+    def percent_read(self) -> int:
+        """Quanto do arquivo já foi lido, de 0 a 99 — o 100 é de quem termina
+        de gravar o resultado."""
+        return min(99, int(self._raw.tell() * 100 / self._size))
+
+    def lines(self) -> Iterator[str]:
+        """As linhas do arquivo, sem as quebras — as mesmas que
+        `str.splitlines()` daria sobre o texto inteiro."""
+        for physical in self._text:
+            parts = physical.splitlines()
+            yield from parts if parts else [""]
 
 
 class DocumentConverter(BaseConverter):
@@ -244,6 +333,9 @@ class DocumentConverter(BaseConverter):
             return self._failure(
                 input_path, f"O arquivo '{get_filename(source)}' não foi encontrado."
             )
+        refused = refuse_overwriting_source(input_path, output_path)
+        if refused is not None:
+            return refused
 
         temp_output: Path | None = None
         produced: Path = destination
@@ -322,7 +414,7 @@ class DocumentConverter(BaseConverter):
         O retorno normal é `None`: a conversão gravou no temporário e a
         classe base o move para o destino, o que é o que mantém a
         gravação atômica. Uma conversão que produz **vários** arquivos
-        (uma planilha de três abas virando três CSVs, na Fase 9) não cabe
+        (uma planilha de três abas virando três CSVs) não cabe
         nesse arranjo: ela grava onde precisa e devolve o caminho do
         resultado — a pasta, nesse caso —, assumindo a responsabilidade
         de limpar o que escreveu se algo der errado no meio.
@@ -448,15 +540,16 @@ class TextToDocxConverter(DocumentConverter):
                 "habilitá-la."
             )
 
-        lines = read_text_file(source).splitlines()
         document = docx.Document()
-        total = len(lines)
-
-        for index, line in enumerate(lines):
-            if index % _PROGRESS_EVERY == 0:
-                context.check_cancelled()
-                context.report_step(index, total)
-            document.add_paragraph(line)
+        # Linha a linha, direto do arquivo: o documento do Word já é montado
+        # na memória, e não há por que guardar também o texto inteiro e a
+        # lista das linhas ao lado dele.
+        with TextReader(source) as text:
+            for index, line in enumerate(text.lines()):
+                if index % _PROGRESS_EVERY == 0:
+                    context.check_cancelled()
+                    context.report(text.percent_read())
+                document.add_paragraph(line)
 
         context.check_cancelled()
         document.save(str(temp_output))
@@ -477,38 +570,45 @@ def wrap_text_lines(text: str, chars_per_line: int) -> list[str]:
     é cortada no meio — é feio, mas o contrário seria deixá-la escapar
     pela borda e desaparecer do PDF.
     """
+    wrapped: list[str] = []
+    for raw_line in text.splitlines():
+        wrapped.extend(wrap_line(raw_line, chars_per_line))
+    return wrapped
+
+
+def wrap_line(raw_line: str, chars_per_line: int) -> list[str]:
+    """Uma linha do arquivo quebrada na largura da página (ver
+    `wrap_text_lines`). Existe separada para o TXT → PDF poder quebrar o
+    texto à medida que lê o arquivo."""
     if chars_per_line < 1:  # pragma: no cover — página absurdamente estreita
         chars_per_line = 1
 
+    line = raw_line.replace("\t", " " * TAB_WIDTH).rstrip()
+    if not line:
+        return [""]
+
     wrapped: list[str] = []
-    for raw_line in text.splitlines():
-        line = raw_line.replace("\t", " " * TAB_WIDTH).rstrip()
-        if not line:
-            wrapped.append("")
-            continue
-
-        # `None` é "ainda não comecei esta linha", diferente de "comecei e
-        # está vazia". A distinção importa na indentação: uma linha que
-        # começa com espaços produz palavras vazias ao ser dividida, e
-        # tratá-las como "não comecei" comeria o recuo do texto.
-        current: str | None = None
-        for word in line.split(" "):
-            while len(word) > chars_per_line:
-                if current is not None:
-                    wrapped.append(current)
-                    current = None
-                wrapped.append(word[:chars_per_line])
-                word = word[chars_per_line:]
-
-            if current is None:
-                current = word
-            elif len(current) + 1 + len(word) <= chars_per_line:
-                current += " " + word
-            else:
+    # `None` é "ainda não comecei esta linha", diferente de "comecei e
+    # está vazia". A distinção importa na indentação: uma linha que
+    # começa com espaços produz palavras vazias ao ser dividida, e
+    # tratá-las como "não comecei" comeria o recuo do texto.
+    current: str | None = None
+    for word in line.split(" "):
+        while len(word) > chars_per_line:
+            if current is not None:
                 wrapped.append(current)
-                current = word
-        wrapped.append(current if current is not None else "")
+                current = None
+            wrapped.append(word[:chars_per_line])
+            word = word[chars_per_line:]
 
+        if current is None:
+            current = word
+        elif len(current) + 1 + len(word) <= chars_per_line:
+            current += " " + word
+        else:
+            wrapped.append(current)
+            current = word
+    wrapped.append(current if current is not None else "")
     return wrapped
 
 
@@ -538,51 +638,56 @@ class TextToPdfConverter(DocumentConverter):
                 "para habilitá-la."
             )
 
-        text = read_text_file(source).translate(PDF_TEXT_REPLACEMENTS)
-
         char_width = pymupdf.get_text_length(
             "0", fontname=PDF_FONT, fontsize=PDF_FONT_SIZE
         )
         usable_width = PAGE_WIDTH - 2 * PAGE_MARGIN
         usable_height = PAGE_HEIGHT - 2 * PAGE_MARGIN
         line_height = PDF_FONT_SIZE * PDF_LINE_HEIGHT
-
-        lines = wrap_text_lines(text, int(usable_width / char_width))
+        chars_per_line = int(usable_width / char_width)
         lines_per_page = max(1, int(usable_height / line_height))
-        pages = [
-            lines[start : start + lines_per_page]
-            for start in range(0, len(lines), lines_per_page)
-        ]
-        # Um arquivo vazio não é um erro — vira um PDF de uma página em
-        # branco, que é o que o documento de fato diz.
-        if not pages:
-            pages = [[]]
 
         document = pymupdf.open()
         try:
-            total = len(pages)
-            for number, page_lines in enumerate(pages):
-                # Entre uma página e outra: nada foi gravado em disco
-                # ainda, o documento só existe em memória.
-                context.check_cancelled()
-                page = document.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
-                if page_lines:
-                    # A origem do texto é a linha de base da primeira
-                    # linha, e não o topo da caixa — daí somar a altura
-                    # da fonte à margem.
-                    page.insert_text(
-                        (PAGE_MARGIN, PAGE_MARGIN + PDF_FONT_SIZE),
-                        page_lines,
-                        fontname=PDF_FONT,
-                        fontsize=PDF_FONT_SIZE,
-                        lineheight=PDF_LINE_HEIGHT,
-                    )
-                context.report_step(number + 1, total)
+            # As páginas são montadas à medida que o arquivo é lido: só a
+            # página em construção fica guardada, e não o texto inteiro.
+            page_lines: list[str] = []
+            pages_written = 0
+            with TextReader(source) as text:
+                for raw_line in text.lines():
+                    for line in wrap_line(raw_line.translate(PDF_TEXT_REPLACEMENTS), chars_per_line):
+                        page_lines.append(line)
+                        if len(page_lines) == lines_per_page:
+                            self._write_page(document, page_lines, context)
+                            pages_written += 1
+                            page_lines = []
+                            context.report(text.percent_read())
+            # O resto da última página — ou, num arquivo vazio, uma página em
+            # branco: vazio não é erro, é o que o documento de fato diz.
+            if page_lines or pages_written == 0:
+                self._write_page(document, page_lines, context)
 
             context.check_cancelled()
             document.save(str(temp_output))
         finally:
             document.close()
+
+    @staticmethod
+    def _write_page(document, page_lines: list[str], context: TaskContext) -> None:
+        # Entre uma página e outra: nada foi gravado em disco ainda, o
+        # documento só existe em memória.
+        context.check_cancelled()
+        page = document.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+        if page_lines:
+            # A origem do texto é a linha de base da primeira linha, e não o
+            # topo da caixa — daí somar a altura da fonte à margem.
+            page.insert_text(
+                (PAGE_MARGIN, PAGE_MARGIN + PDF_FONT_SIZE),
+                page_lines,
+                fontname=PDF_FONT,
+                fontsize=PDF_FONT_SIZE,
+                lineheight=PDF_LINE_HEIGHT,
+            )
 
 
 # --- PDF -> TXT (PyMuPDF) -------------------------------------------------
@@ -670,7 +775,7 @@ class LibreOfficeToPdfConverter(DocumentConverter):
     mecânica (pasta temporária, gravação atômica, tradução do erro) é a
     mesma para todas.
 
-    A Fase 9 é que justificou a base: a planilha (`spreadsheet_converter`)
+    A planilha (`spreadsheet_converter`) é que justificou a base: ela
     precisa exatamente deste caminho, e duplicá-lo lá seria manter duas
     cópias do mesmo cuidado com arquivo temporário e cancelamento.
     """
@@ -706,7 +811,7 @@ class LibreOfficeToPdfConverter(DocumentConverter):
         # O LibreOffice não aceita um nome de arquivo de saída, só uma
         # pasta — então ele grava em uma sessão temporária e o resultado
         # é movido de lá para o temporário do destino, que é quem vira o
-        # arquivo final. A sessão é apagada nos dois desfechos (item 24).
+        # arquivo final. A sessão é apagada nos dois desfechos.
         session_id = temp_manager.new_session()
         try:
             produced = self._manager.convert(

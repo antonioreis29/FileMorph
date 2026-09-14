@@ -1,5 +1,5 @@
 """
-Testes do `TaskContext` (Fase 5, itens 16, 17 e 34).
+Testes do `TaskContext`.
 
 É um módulo pequeno, mas está no caminho de toda conversão: se o
 progresso vier errado a barra mente, e se o cancelamento não for visto

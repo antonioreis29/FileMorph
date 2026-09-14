@@ -1,9 +1,9 @@
 """
-Junção de arquivos em um único PDF (FASE 4, ampliada na FASE 7).
+Junção de arquivos em um único PDF.
 
-É o primeiro merger real do FileMorph. Aceita PDFs, imagens e
+Aceita PDFs, imagens e
 documentos na mesma seleção, na ordem em que aparecem na lista da
-interface (item 12):
+interface:
 
     contrato.docx + foto.jpg + anexo.pdf  ->  documento_final.pdf
 
@@ -12,14 +12,14 @@ antes pelo conversor da sua família — `ImageToPdfConverter` para
 imagens, `TextToPdfConverter` para .txt, `DocxToPdfConverter` para
 .docx, `SpreadsheetToPdfConverter` para .xlsx —, gerando um PDF
 temporário que é concatenado com os demais.
-Esse é exatamente o "pipeline de conversão intermediária" do item 13, e
+Esse é o "pipeline de conversão intermediária" da junção, e
 os arquivos intermediários ficam sob o controle do `temp_manager`
-(item 24), que os apaga ao final — tenha a junção dado certo ou errado.
+que os apaga ao final — tenha a junção dado certo ou errado.
 
 Um único merger cobre todas as combinações. É proposital: dois mergers
 aceitando os mesmos formatos deixariam o registro de compatibilidade
 ambíguo, sem uma regra clara de qual dos dois deveria atender o pedido.
-Foi por isso que a Fase 7 ampliou este merger em vez de acrescentar um
+Foi por isso que os documentos ampliaram este merger em vez de acrescentar um
 "merger de documentos" ao lado dele.
 
 O preço de aceitar documentos é que a lista de formatos de entrada deixa
@@ -43,7 +43,12 @@ from app.converters.document_converter import (
 from app.converters.pdf_converter import ImageToPdfConverter
 from app.converters.spreadsheet_converter import SpreadsheetToPdfConverter
 from app.core.converter import BaseConverter
-from app.core.merger import BaseMerger, MergeResult
+from app.core.merger import (
+    BaseMerger,
+    MergeResult,
+    find_input_conflict,
+    input_conflict_message,
+)
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.file_utils import (
     ensure_directory,
@@ -128,6 +133,13 @@ class PdfMerger(BaseMerger):
         if not input_paths:
             return self._failure(input_paths, "Nenhum arquivo foi selecionado para juntar.")
 
+        # Antes de tudo — antes de criar temporário ou ler qualquer entrada:
+        # a gravação final troca o destino pelo resultado, e um destino que
+        # é uma das entradas destruiria o original.
+        conflict = find_input_conflict(input_paths, output_path)
+        if conflict is not None:
+            return self._failure(input_paths, input_conflict_message(conflict))
+
         missing = [p for p in input_paths if not Path(p).is_file()]
         if missing:
             return self._failure(
@@ -173,7 +185,7 @@ class PdfMerger(BaseMerger):
             if temp_output is not None:
                 temp_output.unlink(missing_ok=True)
             # Os PDFs intermediários das imagens são descartados aqui,
-            # com sucesso ou com falha (item 24).
+            # com sucesso ou com falha.
             temp_manager.cleanup(session_id)
 
         logger.info(
@@ -190,7 +202,7 @@ class PdfMerger(BaseMerger):
         self, input_paths: list[str], session_id: str, context: TaskContext
     ) -> list[Path]:
         """Lista de PDFs a concatenar, na ordem recebida, convertendo o que
-        não é PDF em PDFs temporários pelo caminho (item 13).
+        não é PDF em PDFs temporários pelo caminho.
 
         A preparação das entradas conta como a primeira metade do
         trabalho; a concatenação em si é a segunda.

@@ -8,8 +8,14 @@ sobrescrever arquivos existentes).
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterable
 from pathlib import Path
 from uuid import uuid4
+
+from app.utils.logger import get_logger
+
+logger = get_logger("utils.file_utils")
 
 
 def get_extension(path: str | Path) -> str:
@@ -58,7 +64,7 @@ def resolve_output_path(
          -> X/foto_viagem.jpg
 
     Não verifica conflitos — isso é responsabilidade de quem chama,
-    junto com o fluxo de "arquivo já existe" da UI (item 21).
+    junto com o fluxo de "arquivo já existe" da UI.
     """
     output_dir = Path(output_dir)
     ext = new_extension.lower().lstrip(".")
@@ -69,8 +75,9 @@ def get_unique_path(path: str | Path) -> Path:
     """Se `path` já existir, retorna uma variante com sufixo numérico
     (' (1)', ' (2)', ...) até encontrar um caminho livre.
 
-    Usado quando o usuário escolhe "Criar cópia" no conflito de nomes
-    (item 21), em vez de substituir o arquivo existente.
+    Só olha o disco. Para escolher os destinos de um lote inteiro, em que
+    dois arquivos podem disputar o mesmo nome antes de qualquer um deles
+    existir, quem decide é o `OutputPlanner` (`app/core/output_planner.py`).
     """
     path = Path(path)
     if not path.exists():
@@ -85,11 +92,112 @@ def get_unique_path(path: str | Path) -> Path:
         counter += 1
 
 
+def is_same_file(first: str | Path, second: str | Path) -> bool:
+    """True se os dois caminhos apontam para o mesmo arquivo no disco.
+
+    Comparar os textos não basta no Windows, onde `C:\\Docs\\a.pdf` e
+    `c:/docs/A.PDF` são o mesmo arquivo. Serve para impedir que o
+    resultado de uma operação seja gravado por cima da própria origem.
+    Um caminho que ainda não existe nunca é o mesmo arquivo — para esse
+    caso existe `refers_to_same_path`.
+    """
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return False
+
+
+def path_key(path: str | Path) -> str:
+    """Uma chave de comparação para caminhos, existam eles ou não.
+
+    Dois textos diferentes podem nomear o mesmo lugar: `C:\\Docs\\A.PDF`
+    e `c:/docs/a.pdf` são o mesmo arquivo no Windows, e um nome curto
+    como `SISTEM~2` é o mesmo diretório que o nome longo. `realpath`
+    expande o nome curto e os atalhos do caminho (inclusive quando o
+    arquivo final ainda não existe, resolvendo a parte que existe), e
+    `normcase` iguala maiúsculas e barras no Windows. Em outros sistemas
+    `normcase` não mexe em nada, porque lá a diferença de maiúsculas é
+    diferença de arquivo.
+    """
+    return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(path))))
+
+
+def refers_to_same_path(first: str | Path, second: str | Path) -> bool:
+    """True se os dois caminhos são o mesmo lugar no disco.
+
+    Com os dois arquivos existindo, quem responde é o sistema de arquivos
+    (`is_same_file`), o que cobre até um link físico. Quando algum deles
+    ainda não existe — o destino de uma gravação, tipicamente —, a
+    resposta vem da comparação normalizada de `path_key`.
+    """
+    if is_same_file(first, second):
+        return True
+    return path_key(first) == path_key(second)
+
+
 def ensure_directory(path: str | Path) -> Path:
     """Garante que o diretório exista, criando-o se necessário."""
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def create_unique_directory(path: str | Path) -> Path:
+    """Cria uma pasta nova com o nome pedido, ou com sufixo numérico.
+
+    Serve às conversões que produzem uma pasta de arquivos (as páginas de
+    um PDF, as abas de uma planilha). Verificar se o nome está livre e só
+    depois criar a pasta deixaria uma janela em que duas conversões do
+    mesmo lote, rodando em paralelo, escolhem o mesmo nome. Aqui a própria
+    criação é a verificação: `mkdir` sem `exist_ok` falha se o nome já
+    existir — seja pasta, seja arquivo —, e o sistema de arquivos garante
+    que só uma das duas consegue criá-la.
+    """
+    path = Path(path)
+    ensure_directory(path.parent)
+    stem, suffix, parent = path.stem, path.suffix, path.parent
+    candidate, counter = path, 0
+    while True:
+        try:
+            candidate.mkdir()
+            return candidate
+        except FileExistsError:
+            counter += 1
+            candidate = parent / f"{stem} ({counter}){suffix}"
+
+
+def discard_partial_outputs(
+    written: Iterable[str | Path], created_folder: str | Path | None = None
+) -> None:
+    """Desfaz o que uma conversão de várias saídas já tinha gravado.
+
+    Serve às conversões que produzem uma pasta de arquivos — as páginas
+    de um PDF, as abas de uma planilha — quando elas falham ou são
+    canceladas no meio: nenhum arquivo fica pela metade na pasta do
+    usuário, e a subpasta que a própria conversão criou sai junto.
+
+    A pasta vem por parâmetro, e não deduzida dos arquivos gravados, por
+    dois motivos. O primeiro é o caso em que nada chegou a ser gravado:
+    cancelar antes da primeira página deixava a subpasta vazia para
+    trás, porque não havia arquivo nenhum de onde tirar o caminho dela.
+    O segundo é segurança: deduzida, a "pasta" de uma saída única seria
+    a própria pasta de destino do usuário. Só a pasta criada pela
+    conversão é candidata a sair, e mesmo ela apenas se tiver ficado
+    vazia — `rmdir` recusa uma pasta com conteúdo.
+    """
+    for path in written:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:  # pragma: no cover — arquivo em uso, por exemplo
+            logger.warning("Não foi possível remover o arquivo parcial %s", path)
+    if created_folder is None:
+        return
+    try:
+        Path(created_folder).rmdir()
+    except OSError:
+        # Não estava vazia (alguém gravou algo ali durante a conversão)
+        # ou já não existe: nos dois casos, fica como está.
+        pass
 
 
 # Sufixo dos arquivos temporários de gravação. Fica em um só lugar para
@@ -108,7 +216,7 @@ def temp_output_path(destination: str | Path, keep_extension: bool = False) -> P
 
     `keep_extension` mantém a extensão do destino no fim do nome
     temporário. Pillow e pypdf recebem o formato como parâmetro e não
-    se importam com o nome do arquivo, mas o FFmpeg (Fase 6) descobre o
+    se importam com o nome do arquivo, mas o FFmpeg descobre o
     formato de saída *pela extensão* — um temporário terminado em
     '.filemorph-tmp' o faria recusar a conversão antes de começar.
     """

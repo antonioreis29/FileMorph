@@ -1,5 +1,5 @@
 """
-Um LibreOffice de mentira, usado pelos testes da Fase 7.
+Um LibreOffice de mentira, usado pelos testes de documento, planilha e junção.
 
 Mesmo raciocínio do `fake_ffmpeg.py`: a suíte não pode exigir um
 LibreOffice instalado na máquina que a roda — é um programa de centenas
@@ -15,7 +15,7 @@ pasta indicada por `--outdir` usando o nome do documento de origem, e
 imprime a linha de relatório no mesmo formato do original.
 
 O PDF que ele grava é um PDF de verdade, feito com o PyMuPDF que o
-projeto já usa. Isso é necessário porque a junção da Fase 4 concatena o
+projeto já usa. Isso é necessário porque a junção concatena o
 resultado com os outros arquivos: um arquivo de mentira com a assinatura
 certa passaria pelo conversor e quebraria no pypdf, e o teste diria que o
 problema está na junção quando está no dublê.

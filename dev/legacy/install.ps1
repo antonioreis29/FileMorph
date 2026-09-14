@@ -3,9 +3,13 @@
     Instalador do FileMorph para Windows, sem exigir privilégios de administrador.
 
 .DESCRIPTION
-    O FileMorph roda hoje a partir do código-fonte Python (o empacotamento em
-    .exe é uma fase futura do projeto). Este script faz o que um instalador
-    faria nesse cenário:
+    LEGADO. A forma recomendada de instalar o FileMorph é o instalador
+    FileMorph-<versão>-setup.exe (gerado por empacotar.ps1), que não exige
+    Python na máquina. Este script continua aqui, em dev\legacy, para quem
+    precisa rodar o aplicativo a partir do código-fonte.
+
+    Ele instala o FileMorph a partir do código-fonte Python, fazendo o que um
+    instalador faria nesse cenário:
 
       1. Confere que a pasta de origem é mesmo um FileMorph.
       2. Localiza um Python 3.x utilizável na máquina.
@@ -26,7 +30,8 @@
 .EXAMPLE
     .\install.ps1
 
-    Instala a partir da pasta onde o próprio install.ps1 está.
+    Instala a partir da pasta do projeto, dois níveis acima deste script
+    (dev\legacy fica dentro dela).
 
 .EXAMPLE
     .\install.ps1 -InstallPath 'D:\Apps\FileMorph' -CreateDesktopShortcut:$false
@@ -36,10 +41,11 @@
 
 [CmdletBinding()]
 param(
-    # Pasta de origem: de onde o projeto será copiado. O padrão é a pasta
-    # onde este script está, que é o caso normal (rodar o install.ps1 de
-    # dentro do projeto recém-baixado).
-    [string]$SourcePath = $PSScriptRoot,
+    # Pasta de origem: de onde o projeto será copiado. Deixe em branco para
+    # usar a pasta do projeto que contém este script (dois níveis acima de
+    # dev\legacy). A resolução acontece no corpo do script, onde dá para
+    # conferir o resultado — e nunca cai no diretório de trabalho.
+    [string]$SourcePath = '',
 
     # Pasta de destino. %LOCALAPPDATA%\Programs é o lugar convencional para
     # aplicativos instalados por usuário no Windows — diferente de
@@ -65,7 +71,9 @@ $ErrorActionPreference = 'Stop'
 # controle de versão, caches, e principalmente o .venv da origem — um
 # ambiente virtual carrega caminhos absolutos gravados dentro dele e
 # simplesmente não funciona se for movido de lugar.
-$ExcludedDirectories = @('.git', '.venv', 'venv', 'env', '__pycache__', '.pytest_cache', 'build', 'dist', '.vscode', '.idea')
+# A pasta dev (com estes próprios scripts) e o .github também ficam de
+# fora; o desinstalador é copiado à parte, para a raiz da instalação.
+$ExcludedDirectories = @('.git', '.venv', 'venv', 'env', '__pycache__', '.pytest_cache', 'build', 'dist', '.vscode', '.idea', 'dev', '.github')
 $ExcludedFiles = @('*.pyc', '*.pyo', '*.log', 'FileMorph (sem console).vbs')
 
 
@@ -274,9 +282,18 @@ try {
     Write-Step 'Conferindo a pasta de origem'
 
     if ([string]::IsNullOrWhiteSpace($SourcePath)) {
-        # Acontece quando o script e executado de um jeito que nao define
-        # $PSScriptRoot (colado no terminal, por exemplo).
-        $SourcePath = (Get-Location).Path
+        # A pasta do projeto e a que contem dev\legacy, onde este script
+        # mora. Ela e deduzida do caminho do proprio script, e nunca do
+        # diretorio de trabalho: sem um caminho de script confiavel, o
+        # certo e parar e pedir -SourcePath.
+        $scriptDir = $PSScriptRoot
+        if ([string]::IsNullOrWhiteSpace($scriptDir) -and $MyInvocation.MyCommand.Path) {
+            $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+        }
+        if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+            throw 'Nao foi possivel descobrir a pasta do projeto. Rode novamente passando -SourcePath com o caminho completo da pasta do FileMorph.'
+        }
+        $SourcePath = Split-Path -Parent (Split-Path -Parent $scriptDir)
     }
 
     $SourcePath = (Resolve-Path -LiteralPath $SourcePath).Path
@@ -439,7 +456,7 @@ Depois de instalar, feche e abra o terminal e rode este script de novo.
     } else {
         # Ausencia de FFmpeg nao impede a instalacao: o FileMorph abre
         # normalmente e apenas deixa de oferecer audio e video no seletor
-        # de formato, exatamente como foi desenhado na Fase 6.
+        # de formato, exatamente como o aplicativo foi desenhado.
         Write-Warn 'FFmpeg nao encontrado no PATH.'
         Write-Detail ''
         Write-Detail 'O FileMorph vai funcionar normalmente para imagens e PDF, mas as'
@@ -581,8 +598,14 @@ shell.Run quote & interpreter & quote & " " & quote & entryPoint & quote, 0, Fal
     $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\FileMorph'
     $appVersion = Get-AppVersion -ProjectPath $InstallPath
 
-    # O desinstalador acompanha o projeto e foi copiado junto no passo 3.
+    # O desinstalador mora em dev\legacy no projeto, mas a pasta dev nao e
+    # copiada: ele vai para a raiz da instalacao, que e de onde ele deduz
+    # qual pasta remover.
     $uninstaller = Join-Path $InstallPath 'desinstalar.ps1'
+    $uninstallerSource = Join-Path $SourcePath 'dev\legacy\desinstalar.ps1'
+    if (-not $sameFolder -and (Test-Path -LiteralPath $uninstallerSource)) {
+        Copy-Item -LiteralPath $uninstallerSource -Destination $uninstaller -Force
+    }
     if (-not (Test-Path -LiteralPath $uninstaller)) {
         Write-Warn 'desinstalar.ps1 nao veio no projeto - a entrada ficara sem botao Desinstalar.'
     }

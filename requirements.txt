@@ -1,49 +1,46 @@
-# FileMorph — dependências
+# FileMorph — dependências do aplicativo
 #
-# As dependências estão organizadas por fase de implementação, e na
-# entrega atual (Fases 1 a 9) todas são usadas de verdade. Áudio e vídeo
-# não aparecem na lista porque dependem do FFmpeg, e a conversão de DOCX
-# ou XLSX em PDF depende do LibreOffice: nenhum dos dois é um pacote pip
-# (veja as observações no fim do arquivo).
+# Só o que o próprio aplicativo usa para rodar. As ferramentas de teste
+# estão em requirements-dev.txt e as de empacotamento em
+# requirements-build.txt, para não entrarem no ambiente de quem só quer
+# usar o FileMorph a partir do código-fonte.
+#
+# Para gerar uma versão distribuída, instale com as versões testadas de
+# constraints-release.txt (ver empacotar.ps1):
+#
+#     python -m pip install -r requirements-build.txt -c constraints-release.txt
 
-# --- Interface (Fase 1-2) ---
+# Interface
 PySide6>=6.6.0
 
-# --- Imagens (Fase 3) — obrigatória: sem ela não há conversão ---
+# Imagens — obrigatória: sem ela não há conversão
 Pillow>=10.0.0
 
-# --- PDF (Fase 4) ---
-# pypdf junta PDFs; PyMuPDF rasteriza páginas em imagem. Cada uma é
-# verificada em separado: sem PyMuPDF, "PDF -> imagens" some da
+# PDF
+# pypdf junta PDFs; PyMuPDF rasteriza páginas em imagem e também organiza
+# as páginas de um PDF (miniaturas e nova ordem). Cada uma é verificada em
+# separado: sem PyMuPDF, "PDF -> imagens" e o modo Organizar somem da
 # interface, mas "imagens -> PDF" e a junção continuam funcionando.
 pypdf>=4.0.0
 PyMuPDF>=1.23.0
 
-# --- Documentos (Fase 7) ---
+# Documentos
 # python-docx lê e escreve o formato do Word. O TXT -> PDF e o PDF -> TXT
 # usam o PyMuPDF já listado acima; só o DOCX -> PDF precisa do LibreOffice.
 python-docx>=1.1.0
 
-# --- Planilhas (Fase 9) ---
-# openpyxl lê e escreve XLSX. O CSV é o módulo `csv` da biblioteca
-# padrão; só o XLSX -> PDF precisa do LibreOffice.
+# Planilhas
+# openpyxl lê e escreve XLSX. O CSV é o módulo `csv` da biblioteca padrão;
+# só o XLSX -> PDF precisa do LibreOffice.
 openpyxl>=3.1.0
 
-# --- Empacotamento (Fase 10) ---
-pyinstaller>=6.3.0
-
-# --- Desenvolvimento (para rodar a suíte de testes) ---
-pytest>=8.0.0
-
 # Observações:
-# - Áudio/Vídeo (Fase 6) dependem do FFmpeg, um binário externo
-#   detectado e executado por app/utils/ffmpeg_manager.py — não é um
-#   pacote pip. Baixe em ffmpeg.org e adicione a pasta 'bin' ao PATH do
-#   Windows. Sem ele o aplicativo abre normalmente: apenas as conversões
-#   de áudio e vídeo deixam de aparecer no seletor de formato.
-# - DOCX -> PDF (Fase 7) e XLSX -> PDF (Fase 9) dependem do LibreOffice
-#   em modo headless, detectado e executado por
-#   app/utils/libreoffice_manager.py — também um programa externo, não um
-#   pacote pip. Instale-o de libreoffice.org. Sem ele as demais
-#   conversões de documento e de planilha continuam funcionando: só o
-#   destino "PDF" deixa de ser oferecido para um DOCX ou um XLSX.
+# - Áudio e vídeo dependem do FFmpeg, um programa externo detectado e
+#   executado por app/utils/ffmpeg_manager.py — não é um pacote pip. A
+#   versão distribuída pode trazê-lo em vendor/ffmpeg (ver
+#   vendor/ffmpeg/LEIA-ME.md); sem ele, o aplicativo procura um FFmpeg no
+#   PATH do Windows, e sem nenhum as conversões de áudio e vídeo apenas
+#   deixam de aparecer no seletor de formato.
+# - DOCX -> PDF e XLSX -> PDF dependem do LibreOffice em modo headless,
+#   detectado e executado por app/utils/libreoffice_manager.py — também um
+#   programa externo, opcional, que o usuário instala por conta própria.

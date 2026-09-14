@@ -33,9 +33,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+import sys
 from pathlib import Path
 
 from PIL import Image
+
+RAIZ = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RAIZ))
+
+from app.utils.resources import get_mascot_file  # noqa: E402
 
 # --- Paleta do Ditto ---------------------------------------------------
 # Tons de rosa-lilás com contorno ameixa: a leitura "Ditto" vem da
@@ -254,6 +260,23 @@ def desenhar(d: Desenho) -> Image.Image:
     return imagem
 
 
+def avisar_se_nao_for_o_escolhido(destino: Path) -> None:
+    """Avisa quando o arquivo recém-gravado não é o que a janela vai usar.
+
+    A janela prefere o `ditto.*` animado ao parado (ver
+    `app/utils/resources.py`). Sem este aviso, gravar um `ditto.png` com
+    um `ditto.gif` ao lado seria um comando que termina em "pronto" e
+    não muda nada na tela — o pior tipo de silêncio.
+    """
+    escolhido = get_mascot_file()
+    if escolhido is None or escolhido.resolve() == destino.resolve():
+        return
+    print()
+    print(f"AVISO: a janela vai continuar usando '{escolhido.name}', que tem")
+    print(f"       preferência sobre '{destino.name}'. Para usar o arquivo")
+    print(f"       recém-gravado, tire '{escolhido.name}' da pasta.")
+
+
 def main() -> int:
     raiz = Path(__file__).resolve().parent.parent
     icones = raiz / "assets" / "icons"
@@ -291,6 +314,7 @@ def main() -> int:
 
     print(f"Ícone:   {destino_ico}")
     print(f"Mascote: {mascote / 'ditto.png'}")
+    avisar_se_nao_for_o_escolhido(mascote / "ditto.png")
     return 0
 
 

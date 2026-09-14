@@ -1,0 +1,11 @@
+# FileMorph — ambiente de empacotamento (gerar o instalador)
+#
+#     python -m pip install -r requirements-build.txt -c constraints-release.txt
+#     .\empacotar.ps1
+#
+# O PyInstaller só é usado para montar o executável; ele não entra no
+# pacote distribuído (ver EXCLUIDOS em installer/pyinstaller_comum.py).
+
+-r requirements.txt
+
+pyinstaller>=6.3.0

@@ -1,11 +1,11 @@
 """
-Identidade visual do FileMorph (item 6 do briefing).
+Identidade visual do FileMorph.
 
 Cartoon + moderna + minimalista + tecnológica: cantos bem arredondados,
 sombras suaves (aplicadas via QGraphicsDropShadowEffect nos widgets,
 não aqui), tipografia arredondada e paleta enxuta — sem gradientes
-nem excesso de cor. As mesmas formas se mantêm nos três temas (item
-27); só a paleta muda.
+nem excesso de cor. As mesmas formas se mantêm nos temas claro e
+escuro; só a paleta muda.
 
 As cores saem do mascote: são literalmente os tons do sprite em
 `assets/mascot/`, gerado por `tools/gerar_mascote.py`. O rosa pastel do
@@ -13,13 +13,35 @@ corpo é claro demais para carregar texto, então os papéis ficam
 separados — **o pastel é superfície, o ameixa saturado é interação**
 (botões, progresso, foco).
 
-Este módulo expõe apenas texto de QSS (Qt Style Sheets) e as paletas
-de cor associadas — nenhuma lógica de UI mora aqui.
+Este módulo expõe as paletas de cor, a montagem da folha de estilo a
+partir do modelo `filemorph.qss` e as duas funções que traduzem a paleta
+para coisas que o QSS não sabe fazer (`tint`, `shadow_color`) — nenhuma
+lógica de UI mora aqui.
+
+## Duas regras que valem para o arquivo inteiro
+
+**Nenhum rótulo pinta fundo.** A regra `QWidget` no topo do QSS existe
+para dar cor à janela, mas ela alcança todo widget que não tenha regra
+própria — inclusive os `QLabel`. O resultado era uma faixa da cor da
+janela desenhada por cima de cada superfície: o texto da área de
+arrastar e o nome de cada arquivo apareciam dentro de um retângulo
+levemente fora de tom. A regra `QLabel {{ background: transparent }}`
+corta isso de uma vez; quem realmente precisa de fundo (as pílulas de
+status) reconquista o direito por seletor de id, que é mais específico.
+
+**Nada de cor fixa.** Toda cor sai de um campo da `Palette`, inclusive
+os tons translúcidos, que saem de `tint()`. É o que garante que os dois
+temas continuem consistentes quando um deles muda.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from functools import lru_cache
+from pathlib import Path
+from string import Template
+
+from app.utils.resources import get_asset
 
 
 @dataclass(frozen=True)
@@ -33,6 +55,12 @@ class Palette:
     accent: str
     accent_hover: str
     accent_pressed: str
+    # Um tom do destaque diluído até virar superfície: trilho da barra de
+    # progresso, fundo do seletor de modo, pílulas discretas. Existe como
+    # campo próprio (em vez de sair de `tint`) porque nos dois temas ele é
+    # escolhido a olho, e não calculado — no escuro, diluir o rosa claro
+    # no fundo escuro daria um cinza sujo.
+    accent_soft: str
     # Cor do texto sobre um fundo `accent`. Existe porque os dois temas
     # discordam: no claro o destaque é escuro e pede texto branco; no
     # escuro ele é um rosa claro, onde texto branco ficaria ilegível.
@@ -42,6 +70,17 @@ class Palette:
     success: str
     error: str
     warning: str
+    # Arquivo, em `assets/icons/`, da marca desenhada dentro de uma
+    # caixa de seleção marcada. São dois porque a marca é desenhada
+    # sobre o destaque, e o destaque de cada tema pede uma tinta
+    # diferente por cima. Ausente o arquivo, a caixa marcada continua
+    # sendo o quadrado preenchido — só perde o "v".
+    check_asset: str
+    # Arquivo, em `assets/icons/`, da seta das caixas de escolha. Estilizar
+    # o botão da caixa no QSS apaga a seta nativa do Windows, então ela é
+    # uma arte própria, na cor de texto secundário de cada tema. Ausente o
+    # arquivo, a caixa continua funcionando — só sem a seta.
+    arrow_asset: str
 
 
 LIGHT_PALETTE = Palette(
@@ -54,10 +93,13 @@ LIGHT_PALETTE = Palette(
     accent="#AC49A0",
     accent_hover="#983E8E",
     accent_pressed="#85347C",
+    accent_soft="#F2E0EF",
     on_accent="#FFFFFF",  # 4,99:1 sobre o destaque
     success="#2E9E6B",
     error="#D6455C",
     warning="#C97A16",
+    check_asset="check-branco.svg",
+    arrow_asset="seta-malva.svg",
 )
 
 DARK_PALETTE = Palette(
@@ -73,245 +115,96 @@ DARK_PALETTE = Palette(
     accent="#E0A6D6",
     accent_hover="#EDBBE4",
     accent_pressed="#C98CBF",
+    accent_soft="#453352",
     on_accent="#3A2440",  # 7,08:1 sobre o destaque
     success="#4FD9A4",
     error="#FF8090",
     warning="#FFC163",
+    check_asset="check-ameixa.svg",
+    arrow_asset="seta-lilas.svg",
 )
 
 
 FONT_FAMILY = '"Segoe UI", "Nunito", "Comfortaa", sans-serif'
 
 
+def tint(hex_color: str, percent: int) -> str:
+    """A mesma cor, translúcida, no formato que o QSS entende.
+
+    Serve para as pílulas de status: um verde chapado atrás de
+    "concluído" brigaria com o card, enquanto o mesmo verde a 14%
+    apenas tinge a superfície — e, por ser translúcido, funciona tanto
+    sobre o card claro quanto sobre o escuro, sem precisar de uma
+    segunda cor por tema.
+    """
+    valor = hex_color.lstrip("#")
+    r, g, b = (int(valor[i : i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r}, {g}, {b}, {percent}%)"
+
+
+def shadow_color(palette: Palette) -> tuple[int, int, int]:
+    """O RGB da sombra projetada sob o botão principal.
+
+    A sombra é aplicada em Python (`QGraphicsDropShadowEffect`), porque
+    o QSS do Qt não tem `box-shadow`. A cor é a do próprio destaque, e
+    não um cinza: um cinza fixo, que era o que existia antes nos cards,
+    vira um halo sujo no tema escuro. Tingida do destaque, a sombra lê
+    como o brilho do próprio botão nos dois temas.
+    """
+    valor = palette.accent.lstrip("#")
+    return tuple(int(valor[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+# O modelo da folha de estilo, ao lado deste módulo. Empacotado, ele é
+# copiado para o mesmo lugar relativo (ver `FileMorph.spec`).
+STYLESHEET_TEMPLATE = Path(__file__).with_name("filemorph.qss")
+
+
+@lru_cache(maxsize=1)
+def _stylesheet_template() -> Template:
+    return Template(STYLESHEET_TEMPLATE.read_text(encoding="utf-8"))
+
+
+def _image_rule(asset_name: str) -> str:
+    """A regra `image: url(...)` de uma arte de `assets/icons/`, ou nada se
+    ela não estiver instalada."""
+    arte = get_asset("icons", asset_name)
+    # `as_posix` porque o QSS lê a barra invertida do Windows como
+    # escape, e o caminho do arquivo chegaria quebrado.
+    return f"image: url({arte.as_posix()});" if arte is not None else ""
+
+
+def stylesheet_values(palette: Palette) -> dict[str, str]:
+    """Os valores que preenchem o modelo `filemorph.qss` para uma paleta."""
+    values = {name: str(value) for name, value in asdict(palette).items()}
+    values.update(
+        font_family=FONT_FAMILY,
+        accent_tint_16=tint(palette.accent, 16),
+        success_tint_16=tint(palette.success, 16),
+        error_tint_16=tint(palette.error, 16),
+        warning_tint_18=tint(palette.warning, 18),
+        check_image_rule=_image_rule(palette.check_asset),
+        arrow_image_rule=_image_rule(palette.arrow_asset),
+    )
+    return values
+
+
 def build_stylesheet(palette: Palette) -> str:
     """Gera o QSS completo do aplicativo para uma paleta específica.
 
     Cantos arredondados generosos (12-18px) e ausência de bordas
-    pesadas são a base do visual "cartoon amigável" pedido no item 6,
-    sem cair em aparência infantil (sem cores saturadas em excesso,
-    sem ícones exagerados).
+    pesadas são a base do visual "cartoon amigável", sem cair em
+    aparência infantil (sem cores saturadas em excesso, sem ícones
+    exagerados).
+
+    As regras moram em `filemorph.qss`, um arquivo de QSS de verdade, e não
+    num texto dentro do Python: são centenas de linhas, e escritas aqui
+    cada chave precisaria ser dobrada. `substitute` (e não
+    `safe_substitute`) é de propósito — um marcador sem valor é erro de
+    quem editou o modelo, e precisa aparecer na hora, não virar uma cor
+    faltando na tela.
     """
-    return f"""
-    QWidget {{
-        background-color: {palette.background};
-        color: {palette.text_primary};
-        font-family: {FONT_FAMILY};
-        font-size: 13px;
-    }}
-
-    QMainWindow {{
-        background-color: {palette.background};
-    }}
-
-    QLabel#titleLabel {{
-        font-size: 17px;
-        font-weight: 800;
-    }}
-
-    QLabel#dropTitle {{
-        font-size: 14px;
-        font-weight: 700;
-    }}
-
-    QLabel#subtitleLabel, QLabel#hintLabel {{
-        color: {palette.text_secondary};
-        font-size: 12px;
-    }}
-
-    QLabel#mascotLabel {{
-        color: {palette.text_secondary};
-        font-size: 13px;
-        font-style: italic;
-    }}
-
-    QPushButton {{
-        background-color: {palette.surface_alt};
-        color: {palette.text_primary};
-        border: none;
-        border-radius: 14px;
-        padding: 8px 18px;
-        font-weight: 600;
-    }}
-
-    QPushButton:hover {{
-        background-color: {palette.border};
-    }}
-
-    QPushButton#primaryButton {{
-        background-color: {palette.accent};
-        color: {palette.on_accent};
-        border-radius: 20px;
-        padding: 14px 28px;
-        font-size: 13px;
-        font-weight: 800;
-    }}
-
-    QPushButton#primaryButton:hover {{
-        background-color: {palette.accent_hover};
-    }}
-
-    QPushButton#primaryButton:pressed {{
-        background-color: {palette.accent_pressed};
-    }}
-
-    QPushButton#primaryButton:disabled {{
-        background-color: {palette.border};
-        color: {palette.text_secondary};
-    }}
-
-    QPushButton#modeButton {{
-        background-color: transparent;
-        border-radius: 14px;
-        padding: 7px 22px;
-        font-weight: 800;
-        font-size: 12px;
-        color: {palette.text_secondary};
-    }}
-
-    QPushButton#modeButton:hover:!checked {{
-        color: {palette.text_primary};
-    }}
-
-    QPushButton#modeButton:checked {{
-        background-color: {palette.accent};
-        color: {palette.on_accent};
-    }}
-
-    QFrame#dropArea {{
-        background-color: {palette.surface};
-        border: 2px dashed {palette.border};
-        border-radius: 18px;
-    }}
-
-    QFrame#dropArea:hover {{
-        border-color: {palette.accent};
-    }}
-
-    QFrame#dropArea[dragActive="true"] {{
-        border: 2px dashed {palette.accent};
-        background-color: {palette.surface_alt};
-    }}
-
-    QFrame#fileCard {{
-        background-color: {palette.surface};
-        border-radius: 12px;
-        border: 1px solid {palette.border};
-    }}
-
-    QLabel#cardIcon {{
-        font-size: 15px;
-    }}
-
-    QLabel#cardName {{
-        font-weight: 600;
-    }}
-
-    QLabel#cardError {{
-        color: {palette.error};
-        font-size: 11px;
-    }}
-
-    /* O status muda de cor conforme o estado. A propriedade dinamica
-       'status' e trocada em file_list.py; as cores ficam aqui, junto
-       do resto da paleta, em vez de espalhadas pelo codigo da UI. */
-    QLabel#cardStatus {{
-        font-size: 11px;
-        font-weight: 700;
-    }}
-
-    QLabel#cardStatus[status="waiting"] {{
-        color: {palette.text_secondary};
-    }}
-
-    QLabel#cardStatus[status="processing"] {{
-        color: {palette.accent};
-    }}
-
-    QLabel#cardStatus[status="done"] {{
-        color: {palette.success};
-    }}
-
-    QLabel#cardStatus[status="error"] {{
-        color: {palette.error};
-    }}
-
-    QLabel#cardStatus[status="cancelled"] {{
-        color: {palette.warning};
-    }}
-
-    QPushButton#cardRemove {{
-        background-color: transparent;
-        color: {palette.text_secondary};
-        border-radius: 12px;
-        padding: 0px;
-        font-size: 16px;
-        font-weight: 700;
-    }}
-
-    QPushButton#cardRemove:hover {{
-        background-color: {palette.surface_alt};
-        color: {palette.error};
-    }}
-
-    QFrame#topBar {{
-        background-color: transparent;
-    }}
-
-    QScrollArea, QScrollArea > QWidget > QWidget {{
-        background-color: transparent;
-        border: none;
-    }}
-
-    QComboBox {{
-        background-color: {palette.surface};
-        border: 1px solid {palette.border};
-        border-radius: 12px;
-        padding: 6px 12px;
-    }}
-
-    QComboBox QAbstractItemView {{
-        background-color: {palette.surface};
-        border-radius: 8px;
-        border: 1px solid {palette.border};
-    }}
-
-    QProgressBar {{
-        background-color: {palette.surface_alt};
-        border: none;
-        border-radius: 5px;
-        max-height: 10px;
-        min-height: 10px;
-    }}
-
-    QProgressBar::chunk {{
-        background-color: {palette.accent};
-        border-radius: 5px;
-    }}
-
-    QPushButton#cancelButton {{
-        padding: 6px 16px;
-        font-size: 12px;
-    }}
-
-    QScrollBar:vertical {{
-        background: transparent;
-        width: 8px;
-    }}
-
-    QScrollBar::handle:vertical {{
-        background: {palette.border};
-        border-radius: 4px;
-    }}
-
-    QMenuBar, QMenu {{
-        background-color: {palette.surface};
-    }}
-
-    QMenu::item:selected {{
-        background-color: {palette.surface_alt};
-        border-radius: 6px;
-    }}
-    """
+    return _stylesheet_template().substitute(stylesheet_values(palette))
 
 
 def resolve_theme_name(theme_setting: str) -> str:

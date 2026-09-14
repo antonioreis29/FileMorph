@@ -10,19 +10,23 @@ A checagem de dependência é intencional: se a biblioteca necessária
 não estiver instalada nesta máquina, o conversor simplesmente não é
 registrado — e a interface, que só oferece o que está registrado,
 continua honesta em vez de apresentar uma opção que falharia na hora
-de converter (item 37).
+de converter.
 
-A partir da Fase 6 a checagem vai um passo além para áudio e vídeo:
-não basta o FFmpeg existir, ele precisa ter os codificadores daquele
-formato compilados. Um conversor pode acabar registrado oferecendo
-apenas parte dos seus destinos.
+Para áudio e vídeo a checagem vai um passo além: não basta o FFmpeg
+existir, ele precisa ter os codificadores daquele formato compilados.
+Um conversor pode acabar registrado oferecendo apenas parte dos seus
+destinos.
 
-A Fase 7 acrescentou o segundo programa externo do projeto, o
-LibreOffice, e com ele um caso novo: uma mesma família de formato
-(documentos) tem conversões que são Python puro e uma — DOCX para PDF —
-que depende do programa externo. Elas são decididas em blocos separados,
-de modo que a ausência do LibreOffice tira apenas aquele destino do
-seletor, sem levar as outras conversões de documento com ele.
+Com o LibreOffice, o segundo programa externo do projeto, aparece um
+caso novo: uma mesma família de formato (documentos) tem conversões que
+são Python puro e uma — DOCX para PDF — que depende do programa externo.
+Elas são decididas em blocos separados, de modo que a ausência do
+LibreOffice tira apenas aquele destino do seletor, sem levar as outras
+conversões de documento com ele.
+
+Os dois programas externos podem ser passados como parâmetro. É o que
+deixa os testes decidirem "com FFmpeg" ou "sem LibreOffice" sem depender
+do que está instalado na máquina que roda a suíte.
 """
 
 from __future__ import annotations
@@ -30,8 +34,8 @@ from __future__ import annotations
 import weakref
 
 from app.core.converter import CompatibilityRegistry, compatibility_registry
-from app.utils.ffmpeg_manager import ffmpeg_manager
-from app.utils.libreoffice_manager import libreoffice_manager
+from app.utils.ffmpeg_manager import FFmpegManager, ffmpeg_manager
+from app.utils.libreoffice_manager import LibreOfficeManager, libreoffice_manager
 from app.utils.logger import get_logger
 
 logger = get_logger("converters")
@@ -44,6 +48,9 @@ _registered_into: weakref.WeakSet[CompatibilityRegistry] = weakref.WeakSet()
 
 def register_builtin_converters(
     registry: CompatibilityRegistry | None = None,
+    *,
+    ffmpeg: FFmpegManager | None = None,
+    libreoffice: LibreOfficeManager | None = None,
 ) -> list[str]:
     """Registra todos os conversores implementados e disponíveis.
 
@@ -51,10 +58,12 @@ def register_builtin_converters(
     diagnóstico. É idempotente: chamar duas vezes para o mesmo registro
     não duplica conversores.
 
-    O parâmetro `registry` existe para os testes poderem usar um
-    registro isolado; a aplicação usa o registro global compartilhado.
+    Os parâmetros existem para os testes poderem usar um registro isolado
+    e programas externos de mentira; a aplicação usa os globais.
     """
     target = registry if registry is not None else compatibility_registry
+    ffmpeg = ffmpeg if ffmpeg is not None else ffmpeg_manager
+    libreoffice = libreoffice if libreoffice is not None else libreoffice_manager
 
     if target in _registered_into:
         return []
@@ -156,14 +165,14 @@ def register_builtin_converters(
     # --- Arquivos de escritório para PDF (LibreOffice) -------------------
     # Como no bloco do FFmpeg, aqui a dependência é um programa externo e
     # não um pacote pip: sem LibreOffice, "PDF" simplesmente não aparece
-    # no seletor de formato para um DOCX ou um XLSX (item 37).
-    if libreoffice_manager.is_available():
+    # no seletor de formato para um DOCX ou um XLSX.
+    if libreoffice.is_available():
         from app.converters.document_converter import DocxToPdfConverter
         from app.converters.spreadsheet_converter import SpreadsheetToPdfConverter
 
-        version = libreoffice_manager.status().version or "versão desconhecida"
-        target.register(DocxToPdfConverter())
-        target.register(SpreadsheetToPdfConverter())
+        version = libreoffice.status().version or "versão desconhecida"
+        target.register(DocxToPdfConverter(libreoffice))
+        target.register(SpreadsheetToPdfConverter(libreoffice))
         registered.append(f"DocxToPdfConverter (LibreOffice {version})")
         registered.append("SpreadsheetToPdfConverter (LibreOffice)")
     else:
@@ -178,7 +187,7 @@ def register_builtin_converters(
     # existe, depois quais codificadores ele traz — uma compilação enxuta
     # pode ter libmp3lame e não ter libvpx-vp9, e nesse caso o conversor
     # é registrado oferecendo só os formatos que consegue mesmo gerar.
-    if ffmpeg_manager.is_available():
+    if ffmpeg.is_available():
         from app.converters.audio_converter import AudioConverter
         from app.converters.video_converter import (
             VideoConverter,
@@ -186,9 +195,9 @@ def register_builtin_converters(
         )
 
         media_converters = (
-            ("AudioConverter", AudioConverter()),
-            ("VideoConverter", VideoConverter()),
-            ("VideoToAudioConverter", VideoToAudioConverter()),
+            ("AudioConverter", AudioConverter(ffmpeg)),
+            ("VideoConverter", VideoConverter(ffmpeg)),
+            ("VideoToAudioConverter", VideoToAudioConverter(ffmpeg)),
         )
         for name, converter in media_converters:
             targets = converter.target_formats

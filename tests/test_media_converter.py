@@ -1,16 +1,19 @@
 """
-Testes dos conversores de áudio e vídeo da Fase 6 (item 34 do briefing).
+Testes dos conversores de áudio e vídeo.
 
-Os testes anteriores rodam a conversão de verdade porque Pillow e
+Os testes de imagem e PDF rodam a conversão de verdade porque Pillow e
 PyMuPDF são bibliotecas Python, instaladas junto com o projeto. O
 FFmpeg não é: exigir que ele esteja no PATH da máquina transformaria a
-suíte inteira em "pulado" para quem só quer rodar os testes.
+suíte inteira em "pulado" para quem só quer rodar os testes — e faria o
+resultado depender da compilação do FFmpeg que cada máquina tem.
 
 A saída aqui é `tests/fake_ffmpeg.py`, um programa que imita o pedaço
 do FFmpeg que o FileMorph realmente usa. Com ele, o código exercitado é
 o de produção — a leitura do andamento, o encerramento do processo, a
 tradução do erro, a gravação atômica —, e a única peça falsa é o
-binário do outro lado do cano.
+binário do outro lado do cano. Por rodarem um processo externo, estes
+testes são de integração; a leitura da saída do FFmpeg e a detecção do
+programa, que não rodam nada, estão em `test_ffmpeg_manager.py`.
 
 O que estes testes protegem, em uma frase: uma conversão de mídia
 interrompida ou com erro não pode deixar nada na pasta do usuário, e a
@@ -31,14 +34,10 @@ from app.converters.audio_converter import AudioConverter
 from app.converters.video_converter import VideoConverter, VideoToAudioConverter
 from app.core.converter import CompatibilityRegistry
 from app.core.task_context import OperationCancelled, TaskContext
-from app.utils.ffmpeg_manager import (
-    FFmpegManager,
-    _parse_encoders,
-    friendly_error,
-    parse_duration,
-    parse_progress,
-)
+from app.utils.ffmpeg_manager import FFmpegManager
 from app.utils.file_utils import TEMP_WRITE_SUFFIX
+
+pytestmark = pytest.mark.integration
 
 FAKE_FFMPEG = Path(__file__).parent / "fake_ffmpeg.py"
 
@@ -95,72 +94,12 @@ class _Recorder:
         )
 
 
-# --- Leitura da saída do FFmpeg -----------------------------------------
-
-
-def test_parse_duration_reads_the_header_line() -> None:
-    line = "  Duration: 00:03:21.53, start: 0.000000, bitrate: 130 kb/s"
-    assert parse_duration(line) == pytest.approx(201.53)
-
-
-def test_parse_duration_ignores_unknown_duration() -> None:
-    assert parse_duration("  Duration: N/A, bitrate: N/A") is None
-    assert parse_duration("frame=  120 fps=30") is None
-
-
-def test_parse_progress_reads_microseconds() -> None:
-    assert parse_progress("out_time_us=10240000") == pytest.approx(10.24)
-
-
-def test_parse_progress_reads_timestamp() -> None:
-    assert parse_progress("out_time=00:00:10.240000") == pytest.approx(10.24)
-
-
-def test_parse_progress_ignores_out_time_ms() -> None:
-    """`out_time_ms` é publicado em microssegundos por herança do FFmpeg.
-
-    Aceitá-la faria o progresso correr mil vezes mais rápido do que a
-    conversão — a barra chegaria a 100% no primeiro aviso.
-    """
-    assert parse_progress("out_time_ms=10240000") is None
-
-
-def test_parse_progress_survives_the_initial_invalid_timestamp() -> None:
-    assert parse_progress("out_time=-00:00:00.000001") == 0.0
-    assert parse_progress("out_time_us=N/A") is None
-    assert parse_progress("speed=1.02x") is None
-
-
-def test_parse_encoders_reads_the_names() -> None:
-    output = (
-        "Encoders:\n"
-        " V..... = Video\n"
-        " ------\n"
-        " A....D aac                  AAC (Advanced Audio Coding)\n"
-        " V....D libx264              libx264 H.264 / AVC\n"
-    )
-    assert _parse_encoders(output) == {"aac", "libx264"}
-
-
-def test_friendly_error_translates_a_known_failure() -> None:
-    message = friendly_error(["x.mp3: Invalid data found when processing input"])
-    assert "corrompido" in message
-
-
-def test_friendly_error_falls_back_to_the_last_line() -> None:
-    message = friendly_error(["Alguma coisa estranha aconteceu"])
-    assert "Alguma coisa estranha aconteceu" in message
-
-
 # --- Camada de compatibilidade -------------------------------------------
 
 
 def test_audio_targets_follow_the_installed_encoders() -> None:
-    """Uma compilação sem libvorbis não pode oferecer OGG.
-
-    É a regra do item 37 aplicada a um binário externo: melhor não
-    oferecer do que oferecer e falhar na hora de converter.
-    """
+    """Uma compilação sem libvorbis não pode oferecer OGG: melhor não
+    oferecer do que oferecer e falhar na hora de converter."""
     converter = AudioConverter(_manager(encoders="libmp3lame,pcm_s16le,flac,aac"))
     assert converter.target_formats == {"mp3", "wav", "flac", "m4a"}
     assert "ogg" not in converter.target_formats
@@ -212,8 +151,8 @@ def test_registry_routes_each_video_target_to_the_right_converter() -> None:
 
 def test_registry_offers_nothing_for_media_without_encoders() -> None:
     """Uma compilação do FFmpeg sem nenhum codificador de vídeo não pode
-    fazer o seletor mostrar MP4 — é o item 37 aplicado a um binário que
-    varia de máquina para máquina."""
+    fazer o seletor mostrar MP4 — o que existe varia de máquina para
+    máquina, e o seletor precisa acompanhar."""
     registry = CompatibilityRegistry()
     registry.register(VideoConverter(_manager(encoders="pcm_s16le")))
 
@@ -230,23 +169,10 @@ def test_ffmpeg_status_reports_the_version() -> None:
 # --- Registro na inicialização -------------------------------------------
 
 
-def _use_fake_ffmpeg(monkeypatch: pytest.MonkeyPatch, manager: object) -> None:
-    """Troca o FFmpeg global visto pelo registro e pelos conversores.
-
-    São dois pontos porque o registro pergunta "existe FFmpeg nesta
-    máquina?" e cada conversor pergunta "quais codificadores ele tem?".
-    """
-    monkeypatch.setattr("app.converters.ffmpeg_manager", manager)
-    monkeypatch.setattr("app.converters.media_converter.ffmpeg_manager", manager)
-
-
-def test_media_converters_are_registered_when_ffmpeg_exists(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _use_fake_ffmpeg(monkeypatch, _manager())
+def test_media_converters_are_registered_when_ffmpeg_exists() -> None:
     registry = CompatibilityRegistry()
 
-    names = register_builtin_converters(registry)
+    names = register_builtin_converters(registry, ffmpeg=_manager())
 
     assert any("AudioConverter" in name for name in names)
     assert any("VideoConverter" in name for name in names)
@@ -255,30 +181,24 @@ def test_media_converters_are_registered_when_ffmpeg_exists(
     assert registry.can_convert("mkv", "m4a")  # trilha sonora de um vídeo
 
 
-def test_media_converters_are_skipped_without_ffmpeg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_media_converters_are_skipped_without_ffmpeg() -> None:
     """Sem FFmpeg o aplicativo abre normalmente e apenas deixa de oferecer
     áudio e vídeo — não é um erro de inicialização."""
-    _use_fake_ffmpeg(monkeypatch, _UnavailableManager())
     registry = CompatibilityRegistry()
 
-    names = register_builtin_converters(registry)
+    names = register_builtin_converters(registry, ffmpeg=_UnavailableManager())
 
     assert not any("Audio" in name or "Video" in name for name in names)
     assert not registry.can_convert("mp3", "wav")
     assert registry.available_targets_for("mp4") == set()
 
 
-def test_media_converters_are_skipped_without_the_needed_encoders(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_media_converters_are_skipped_without_the_needed_encoders() -> None:
     """FFmpeg presente, mas compilado sem nada que sirva: o conversor de
     vídeo não entra, e o de áudio entra oferecendo só o que dá."""
-    _use_fake_ffmpeg(monkeypatch, _manager(encoders="pcm_s16le"))
     registry = CompatibilityRegistry()
 
-    register_builtin_converters(registry)
+    register_builtin_converters(registry, ffmpeg=_manager(encoders="pcm_s16le"))
 
     assert registry.available_targets_for("mp3") == {"wav"}
     assert registry.available_targets_for("mp4") == {"wav"}
@@ -312,7 +232,7 @@ def test_conversion_never_touches_the_original(tmp_path: Path) -> None:
 def test_conversion_reports_progress_from_inside_the_task(tmp_path: Path) -> None:
     """A barra precisa andar durante a conversão de um único arquivo:
     um vídeo de dez minutos é uma tarefa só, e ficar em 0% até o fim
-    era exatamente o problema que a Fase 5 resolveu."""
+    faria o aplicativo parecer travado."""
     source = _make_source(tmp_path / "video.mp4")
     recorder = _Recorder()
 
@@ -445,6 +365,18 @@ def test_missing_source_is_reported_clearly(tmp_path: Path) -> None:
 
     assert not result.success
     assert "não foi encontrado" in (result.error_message or "")
+
+
+def test_refuses_to_write_over_the_source(tmp_path: Path) -> None:
+    """MP3 para MP3 no mesmo arquivo: o FFmpeg nem chega a rodar."""
+    record = tmp_path / "argumentos.json"
+    source = _make_source(tmp_path / "musica.mp3")
+
+    result = AudioConverter(_manager(record=record)).convert(str(source), str(source))
+
+    assert not result.success
+    assert source.read_bytes() == b"arquivo de teste"
+    assert not record.exists()
 
 
 def test_missing_encoder_is_refused_before_converting(tmp_path: Path) -> None:

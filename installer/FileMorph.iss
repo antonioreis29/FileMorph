@@ -1,39 +1,41 @@
 ; ============================================================
 ;  FileMorph - receita do instalador (Inno Setup 6)
 ;
-;  Compile com:
-;      ISCC.exe installer\FileMorph.iss
+;  Use o empacotar.ps1 na raiz, que roda o PyInstaller, verifica o
+;  executavel e chama isto em seguida. A mao:
 ;
-;  Ou use o empacotar.ps1 na raiz, que roda o PyInstaller antes e
-;  chama isto em seguida.
+;      ISCC.exe /DMyAppVersion=1.2.3 installer\FileMorph.iss
 ;
 ;  O que este arquivo produz e por que ele existe
 ;  ---------------------------------------------
-;  Um unico setup.exe que pode ser enviado para outra pessoa. Ele
-;  resolve as duas limitacoes do install.ps1:
+;  Um unico setup.exe - dist\installer\FileMorph-<versao>-setup.exe -,
+;  que e o arquivo a ser enviado para outra pessoa. Ele instala a pasta
+;  que o PyInstaller gerou (dist\FileMorph), que carrega o proprio Python
+;  dentro dela: a maquina de destino nao precisa ter Python instalado.
 ;
-;    1. O install.ps1 nao pode ser enviado sozinho: ele instala
-;       copiando a pasta em que esta, e exige um Python 3.12+ ja
-;       instalado na maquina de destino. O executavel do PyInstaller
-;       carrega o proprio Python dentro dele, entao nao exige nada.
-;    2. O Inno Setup escreve sozinho a chave de desinstalacao no
-;       registro, cria os atalhos e gera o unins000.exe. E o mesmo
-;       mecanismo que coloca qualquer programa em Configuracoes >
-;       Aplicativos — o VS Code, por exemplo, e instalado assim.
+;  O FileMorph.exe de dist\FileMorph NAO e um executavel para enviar
+;  sozinho: ele depende dos arquivos da pasta ao lado dele.
 ;
-;  A versao NAO e escrita aqui. Ela e passada pela linha de comando
-;  (/DMyAppVersion=...) a partir de app/version.py, para nao haver
-;  duas fontes discordando. O valor abaixo so vale se alguem compilar
-;  este arquivo a mao, sem passar nada.
+;  O Inno Setup escreve sozinho a chave de desinstalacao no registro, cria
+;  os atalhos e gera o unins000.exe. E o mesmo mecanismo que coloca
+;  qualquer programa em Configuracoes > Aplicativos.
+;
+;  A versao NAO e escrita aqui. Ela vem de app/version.py, passada pela
+;  linha de comando (/DMyAppVersion=...), para nao haver duas fontes
+;  discordando. Compilar sem ela e um erro, e nao um instalador "0.0.0".
 ; ============================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.0.0"
+  #error Passe a versao: ISCC.exe /DMyAppVersion=x.y.z installer\FileMorph.iss (o empacotar.ps1 faz isso sozinho).
 #endif
 
+#ifndef MyAppPublisher
+  #define MyAppPublisher "Antonio Reis"
+#endif
+#ifndef MyAppURL
+  #define MyAppURL "https://github.com/antonioreis29/FileMorph"
+#endif
 #define MyAppName "FileMorph"
-#define MyAppPublisher "Antonio Reis"
-#define MyAppURL "https://github.com/antonioreis29/FileMorph"
 #define MyAppExeName "FileMorph.exe"
 
 [Setup]
@@ -59,16 +61,14 @@ VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Instalador do {#MyAppName}
 
 ; PrivilegesRequired=lowest instala para o usuario atual, sem pedir
-; elevacao — a mesma escolha do install.ps1. O destino cai em
-; %LOCALAPPDATA%\Programs, e nao em C:\Program Files, porque escrever
-; la exigiria privilegio de administrador.
+; elevacao. O destino cai em %LOCALAPPDATA%\Programs, e nao em
+; C:\Program Files, porque escrever la exigiria privilegio de
+; administrador.
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 
-; O instalador pode ser fechado sem instalar nada; sem isto o Inno
-; Setup pergunta antes de sair, o que so atrapalha.
 DisableWelcomePage=no
 LicenseFile=
 InfoBeforeFile=
@@ -77,6 +77,11 @@ OutputBaseFilename=FileMorph-{#MyAppVersion}-setup
 SetupIconFile=..\assets\icons\filemorph.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
+
+; Um FileMorph aberto segura os arquivos da pasta: o instalador pede para
+; fecha-lo antes de substituir, em vez de falhar no meio da copia.
+CloseApplications=yes
+RestartApplications=no
 
 ; lzma2/max e a compressao mais forte disponivel. Compilar demora mais,
 ; mas o setup.exe e baixado muitas vezes e compilado uma so.
@@ -98,8 +103,8 @@ Name: "desktopicon"; Description: "Criar um atalho na Area de Trabalho"; GroupDe
 
 [Files]
 ; O PyInstaller produz dist\FileMorph\ com o .exe e tudo de que ele
-; precisa. A pasta inteira entra, recursivamente.
-Source: "..\dist\{#MyAppName}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; precisa. A pasta inteira entra, recursivamente - o FileMorph.exe
+; incluido, pelo mesmo curinga.
 Source: "..\dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -114,19 +119,20 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir o {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; O aplicativo grava logs e temporarios dentro da propria pasta em
-; algumas situacoes. Sem isto, a pasta sobra vazia-mas-nao-vazia depois
-; de desinstalar, porque o Inno Setup so remove o que ele instalou.
+; Restos que versoes antigas do aplicativo podiam deixar dentro da propria
+; pasta. Sem isto, a pasta sobraria vazia-mas-nao-vazia depois de
+; desinstalar, porque o Inno Setup so remove o que ele instalou. Nada
+; aqui e do usuario: os dados dele ficam fora da pasta do programa.
 Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\.filemorph_tmp"
 
 [Code]
 // As configuracoes do usuario ficam em %APPDATA%\FileMorph e os
-// arquivos convertidos em Documentos\FileMorph\Convertidos. Nenhum dos
-// dois e tocado na desinstalacao, de proposito e pela mesma razao
-// documentada no desinstalar.ps1: foram criados pelo aplicativo em
-// tempo de execucao, nao pelo instalador, e apagar o trabalho do
-// usuario nao e o que "desinstalar o programa" significa.
+// arquivos convertidos em Documentos\FileMorph\Convertidos (ou na pasta
+// escolhida nas configuracoes). Nenhum dos dois e tocado na
+// desinstalacao, de proposito: foram criados pelo aplicativo em tempo de
+// execucao, nao pelo instalador, e apagar o trabalho do usuario nao e o
+// que "desinstalar o programa" significa.
 //
 // Este bloco existe para avisar isso na tela, ja que a pergunta
 // aparece toda vez que alguem desinstala algo.

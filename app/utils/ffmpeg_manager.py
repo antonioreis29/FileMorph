@@ -1,19 +1,22 @@
 """
-Módulo dedicado ao FFmpeg (item 25 do briefing).
+Módulo dedicado ao FFmpeg, o programa externo que converte áudio e vídeo.
 
-Nas Fases 1-5 este módulo respondia a uma única pergunta — "o FFmpeg
-está instalado?" — usada apenas pela verificação de dependências. Na
-Fase 6 ele vira o executor de verdade, e continua sendo o único lugar
-do FileMorph que cria um processo externo.
+É o executor de verdade das conversões de mídia, e um dos dois únicos
+lugares do FileMorph que criam um processo externo (o outro é o
+LibreOffice).
 
 Três responsabilidades:
 
 1. **Detecção** (`status`): onde está o `ffmpeg`, qual a versão e se o
    `ffprobe` veio junto (ele é opcional: sem ele, a duração da mídia é
-   lida do próprio relatório do FFmpeg).
+   lida do próprio relatório do FFmpeg). A procura segue uma ordem fixa
+   (ver `detect_ffmpeg`): primeiro o FFmpeg distribuído junto com o
+   FileMorph, depois um caminho definido nas configurações, por último o
+   PATH do Windows — assim a versão empacotada funciona sem o usuário
+   configurar nada.
 2. **Inventário** (`available_encoders`): quais codificadores esta
    compilação do FFmpeg realmente tem. Nem toda build traz libx264 ou
-   libvpx-vp9, e o princípio do projeto (item 37) é não oferecer o que
+   libvpx-vp9, e o princípio do projeto é não oferecer o que
    falharia na hora — por isso os conversores consultam esta lista
    antes de dizer para quais formatos sabem converter.
 3. **Execução** (`run`): roda o comando, traduz o andamento para a
@@ -23,8 +26,8 @@ Três responsabilidades:
 Sobre progresso e cancelamento: com `-progress pipe:1` o FFmpeg escreve
 um bloco de andamento a cada meio segundo, e é entre dois desses blocos
 que o pedido de parada é percebido — o mesmo cancelamento cooperativo
-da Fase 5, só que o "ponto seguro" agora é uma leitura de linha em vez
-de uma página de PDF. Como a saída da conversão é sempre um arquivo
+das outras conversões, só que o "ponto seguro" agora é uma leitura de
+linha em vez de uma página de PDF. Como a saída da conversão é sempre um arquivo
 temporário, encerrar o processo no meio não deixa nada pela metade na
 pasta do usuário: quem chama apaga o temporário, e o arquivo de destino
 final nunca chegou a ser tocado.
@@ -32,21 +35,23 @@ final nunca chegou a ser tocado.
 Este módulo é livre de Qt, como o resto de `app/core` e
 `app/converters`: ele fala com a interface apenas pela `TaskContext`.
 
-Toda chamada de processo externo evita `shell=True` (item 31).
+Toda chamada de processo externo evita `shell=True`.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.logger import get_logger
+from app.utils.resources import get_vendor_dir
 
 logger = get_logger("utils.ffmpeg")
 
@@ -85,8 +90,18 @@ class FFmpegError(Exception):
 
     A mensagem desta exceção é escrita para ser exibida na interface: os
     conversores a repassam direto para o `ConversionResult`, e o
-    relatório técnico completo fica no log (item 23).
+    relatório técnico completo fica no log.
     """
+
+
+# De onde veio o FFmpeg em uso — mostrado no diagnóstico, para quem ajuda o
+# usuário saber qual FFmpeg está convertendo.
+SOURCE_BUNDLED = "bundled"  # distribuído junto com o FileMorph
+SOURCE_CONFIGURED = "configured"  # caminho definido nas configurações
+SOURCE_PATH = "path"  # encontrado no PATH do Windows
+
+# Página oficial de download, oferecida quando o FFmpeg não está disponível.
+FFMPEG_DOWNLOAD_URL = "https://ffmpeg.org/download.html"
 
 
 @dataclass
@@ -95,6 +110,7 @@ class FFmpegStatus:
     executable_path: str | None
     version: str | None
     ffprobe_path: str | None = None
+    source: str | None = None
 
 
 # --- Leitura da saída do FFmpeg (funções puras, fáceis de testar) --------
@@ -254,22 +270,91 @@ def _read_version(command_prefix: Sequence[str]) -> str | None:
     return version or None
 
 
-def detect_ffmpeg() -> FFmpegStatus:
-    """Verifica se o FFmpeg está disponível no PATH e tenta ler a versão.
+def _program_name(name: str) -> str:
+    return f"{name}.exe" if os.name == "nt" else name
 
-    Nunca lança exceção — em caso de qualquer problema, retorna
-    `available=False`, para que a UI possa avisar o usuário sem derrubar
-    o aplicativo (item 30: "não fechar o aplicativo inesperadamente").
+
+def bundled_ffmpeg_dir() -> Path:
+    """Onde o FFmpeg distribuído junto com o FileMorph fica: `vendor/ffmpeg`,
+    na raiz do projeto ou dentro do pacote do PyInstaller."""
+    return get_vendor_dir() / "ffmpeg"
+
+
+def _file_in(folder: Path, name: str) -> Path | None:
+    candidate = folder / _program_name(name)
+    try:
+        return candidate if candidate.is_file() else None
+    except OSError:  # pragma: no cover — caminho inválido no sistema
+        return None
+
+
+def detect_ffmpeg(
+    *,
+    bundled_dir: Path | None = None,
+    configured_path: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    read_version: Callable[[Sequence[str]], str | None] | None = None,
+) -> FFmpegStatus:
+    """Procura o FFmpeg, na ordem de preferência, e tenta ler a versão.
+
+    1. **O que veio com o FileMorph** (`vendor/ffmpeg/ffmpeg.exe`). É o que
+       faz a versão distribuída converter áudio e vídeo sem o usuário
+       instalar nada, e vem primeiro porque é a compilação que foi testada
+       com o aplicativo.
+    2. **Um caminho definido nas configurações** — a pasta do FFmpeg ou o
+       próprio `ffmpeg.exe` —, para quem já tem um FFmpeg e quer usá-lo.
+    3. **O PATH do Windows**, que era a única procura antes.
+
+    O `ffprobe` é procurado ao lado do `ffmpeg` escolhido; só para o do PATH
+    ele também é procurado no PATH.
+
+    Os parâmetros existem para os testes. Nunca lança exceção — em caso de
+    qualquer problema, retorna `available=False`, para que a UI possa avisar
+    o usuário sem derrubar o aplicativo.
     """
-    exe_path = shutil.which("ffmpeg")
+    read_version = read_version or _read_version
+    folder = bundled_dir if bundled_dir is not None else bundled_ffmpeg_dir()
+
+    bundled = _file_in(folder, "ffmpeg")
+    if bundled is not None:
+        probe = _file_in(folder, "ffprobe")
+        return FFmpegStatus(
+            available=True,
+            executable_path=str(bundled),
+            version=read_version([str(bundled)]),
+            ffprobe_path=str(probe) if probe else None,
+            source=SOURCE_BUNDLED,
+        )
+
+    if configured_path:
+        configured = Path(configured_path)
+        try:
+            chosen = _file_in(configured, "ffmpeg") if configured.is_dir() else (
+                configured if configured.is_file() else None
+            )
+        except OSError:  # pragma: no cover — caminho inválido no sistema
+            chosen = None
+        if chosen is not None:
+            probe = _file_in(chosen.parent, "ffprobe")
+            return FFmpegStatus(
+                available=True,
+                executable_path=str(chosen),
+                version=read_version([str(chosen)]),
+                ffprobe_path=str(probe) if probe else None,
+                source=SOURCE_CONFIGURED,
+            )
+        logger.warning("O FFmpeg configurado não foi encontrado: %s", configured_path)
+
+    exe_path = which("ffmpeg")
     if not exe_path:
         return FFmpegStatus(available=False, executable_path=None, version=None)
 
     return FFmpegStatus(
         available=True,
         executable_path=exe_path,
-        version=_read_version([exe_path]),
-        ffprobe_path=shutil.which("ffprobe"),
+        version=read_version([exe_path]),
+        ffprobe_path=which("ffprobe"),
+        source=SOURCE_PATH,
     )
 
 
@@ -283,10 +368,22 @@ class FFmpegManager:
     aplicação usa a instância global, que descobre o binário sozinha.
     """
 
-    def __init__(self, executable: Sequence[str] | None = None) -> None:
+    def __init__(
+        self, executable: Sequence[str] | None = None, configured_path: str | None = None
+    ) -> None:
         self._override: list[str] | None = list(executable) if executable else None
+        self._configured_path = configured_path or None
         self._status: FFmpegStatus | None = None
         self._encoders: frozenset[str] | None = None
+
+    def set_configured_path(self, path: str | None) -> None:
+        """Define o FFmpeg escolhido nas configurações (segunda opção da
+        procura) e esquece o que já tinha sido detectado."""
+        path = path or None
+        if path != self._configured_path:
+            self._configured_path = path
+            self._status = None
+            self._encoders = None
 
     # --- Disponibilidade --------------------------------------------------
 
@@ -297,7 +394,7 @@ class FFmpegManager:
 
     def _detect(self) -> FFmpegStatus:
         if self._override is None:
-            return detect_ffmpeg()
+            return detect_ffmpeg(configured_path=self._configured_path)
         return FFmpegStatus(
             available=True,
             executable_path=" ".join(self._override),
@@ -424,8 +521,8 @@ class FFmpegManager:
         prefix = self.command_prefix()
         if prefix is None:
             raise FFmpegError(
-                "O FFmpeg não foi encontrado nesta máquina. Instale-o e adicione "
-                "a pasta 'bin' ao PATH do Windows para converter áudio e vídeo."
+                "O FFmpeg não foi encontrado nesta máquina, e ele é necessário para "
+                "converter áudio e vídeo. Veja ⋯ → Diagnóstico para instalá-lo."
             )
 
         # As opções globais (`-progress`, `-y`, ...) vêm antes de `-i`.

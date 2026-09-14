@@ -1,5 +1,5 @@
 """
-Área de arrastar-e-soltar (item 8 do briefing).
+Área de arrastar-e-soltar.
 
 Aceita múltiplos arquivos, destaca-se visualmente durante o arraste,
 valida extensões e comunica arquivos válidos/inválidos via sinais —
@@ -21,8 +21,16 @@ from PySide6.QtWidgets import (
 from app.core.file_validator import validate_paths
 from app.ui.mascot import MascotState, MascotWidget
 
-# Altura do mascote dentro da area de arrastar.
+# Altura do mascote dentro da área de arrastar, nos dois tamanhos da
+# área (ver `set_compact`).
 MASCOT_HEIGHT = 76
+MASCOT_HEIGHT_COMPACT = 46
+
+# Altura mínima da área de arrastar. Com a lista vazia ela é o assunto
+# da janela e ocupa o espaço que sobrar; com arquivos na lista ela vira
+# uma faixa, para que a lista fique com a altura.
+DROP_HEIGHT = 180
+DROP_HEIGHT_COMPACT = 108
 
 
 class FileDropArea(QFrame):
@@ -35,8 +43,9 @@ class FileDropArea(QFrame):
         super().__init__(parent)
         self.setObjectName("dropArea")
         self.setAcceptDrops(True)
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(DROP_HEIGHT)
         self.setProperty("dragActive", False)
+        self._compact = False
 
         # A area inteira abre o seletor de arquivos, entao o cursor
         # precisa avisar que ela e clicavel - antes so o botao era, e o
@@ -45,6 +54,7 @@ class FileDropArea(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
+        self._layout = layout
 
         # O mascote recebe quem chega. Sem imagem, ele se esconde e o
         # texto sobe - a area continua funcionando igual.
@@ -73,6 +83,38 @@ class FileDropArea(QFrame):
         layout.addWidget(self._main_label)
         layout.addWidget(self._hint_label)
         layout.addStretch()
+
+    # --- Tamanho ---------------------------------------------------------
+
+    def set_compact(self, compact: bool) -> None:
+        """Alterna entre a área grande (lista vazia) e a faixa (com arquivos).
+
+        Enquanto não há arquivo nenhum, arrastar é a única coisa a se
+        fazer na janela, e a área ocupa o espaço à altura disso. Assim
+        que a lista tem conteúdo, o assunto passa a ser a lista: a área
+        encolhe para uma faixa que continua recebendo arquivos novos, e
+        o mascote encolhe junto em vez de sumir — ele é quem reage ao
+        que está acontecendo.
+        """
+        if compact == self._compact:
+            return
+        self._compact = compact
+
+        self.setMinimumHeight(DROP_HEIGHT_COMPACT if compact else DROP_HEIGHT)
+        self._mascot.set_height(MASCOT_HEIGHT_COMPACT if compact else MASCOT_HEIGHT)
+        self._layout.setSpacing(4 if compact else 8)
+
+        self._main_label.setText(
+            "Arraste mais arquivos aqui" if compact else "Arraste seus arquivos aqui"
+        )
+        self._main_label.setProperty("compact", "true" if compact else "false")
+        self._main_label.style().unpolish(self._main_label)
+        self._main_label.style().polish(self._main_label)
+
+        # Na faixa, "ou clique para selecionar" sai: a área inteira já
+        # é clicável, e o cursor diz isso — a linha extra só gastaria a
+        # altura que acabou de ser devolvida à lista.
+        self._hint_label.setVisible(not compact)
 
     # --- Mascote ---------------------------------------------------------
 

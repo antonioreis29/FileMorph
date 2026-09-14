@@ -1,4 +1,4 @@
-"""Testes de app.core.file_validator (item 34 do briefing)."""
+"""Testes de app.core.file_validator."""
 
 from __future__ import annotations
 

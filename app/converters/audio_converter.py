@@ -1,14 +1,14 @@
 """
-Conversor de áudio baseado em FFmpeg (FASE 6 do briefing).
+Conversor de áudio baseado em FFmpeg.
 
 Este é o primeiro conversor do FileMorph que depende de um binário
 externo em vez de uma biblioteca Python. A consequência prática está em
 `app/converters/__init__.py`: numa máquina sem FFmpeg ele simplesmente
 não é registrado, e o seletor de formato continua honesto — um MP3
 adicionado à lista não oferece nenhum destino, em vez de oferecer uma
-conversão que falharia (item 37).
+conversão que falharia.
 
-Escopo desta fase: MP3, WAV, FLAC, OGG e M4A em qualquer combinação.
+Formatos: MP3, WAV, FLAC, OGG e M4A, em qualquer combinação.
 
 Duas decisões que valem para todos os destinos:
 
@@ -19,7 +19,7 @@ Duas decisões que valem para todos os destinos:
   copiadas: isso o FFmpeg já faz por padrão.
 - **A qualidade é alta o suficiente para a conversão não ser
   perceptivelmente destrutiva** no uso comum, seguindo a mesma escolha
-  feita no conversor de imagens da Fase 3.
+  feita no conversor de imagens.
 
 Lembrando que converter entre dois formatos com perdas (MP3 -> OGG,
 por exemplo) sempre recodifica: não existe conversão sem perda entre

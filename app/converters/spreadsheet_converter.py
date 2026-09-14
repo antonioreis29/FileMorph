@@ -1,5 +1,5 @@
 """
-Conversores de planilha (FASE 9 do briefing).
+Conversores de planilha.
 
 Três caminhos:
 
@@ -8,7 +8,7 @@ Três caminhos:
 - `SpreadsheetToPdfConverter` — XLSX → PDF, com LibreOffice headless.
 
 A mecânica de gravação (temporário ao lado do destino, erro traduzido,
-cancelamento) é herdada de `DocumentConverter`, da Fase 7: planilha e
+cancelamento) é herdada de `DocumentConverter`: planilha e
 documento têm exatamente o mesmo roteiro por dentro, e manter duas
 cópias dele seria manter dois lugares para o mesmo cuidado dar errado.
 
@@ -18,7 +18,7 @@ cópias dele seria manter dois lugares para o mesmo cuidado dar errado.
 guarda uma tabela, e uma pasta de trabalho guarda quantas quiser.
 Converter só a aba ativa e calar sobre as outras seria perder dados sem
 avisar. A saída segue a mesma regra que o PDF de várias páginas já usa
-desde a Fase 4: uma aba só vira exatamente o arquivo pedido; várias
+uma aba só vira exatamente o arquivo pedido; várias
 viram uma subpasta com o nome da planilha, um CSV por aba — **incluindo
 as abas ocultas**, que são onde costuma morar a tabela de apoio das
 fórmulas, e cujo nome vai no arquivo para ninguém receber um CSV sem
@@ -56,8 +56,8 @@ costuma corromper dado silenciosamente:
 
 from __future__ import annotations
 
+import contextlib
 import csv
-import io
 import re
 from collections.abc import Iterator
 from datetime import date, datetime, time, timedelta
@@ -67,14 +67,14 @@ from app.converters.document_converter import (
     ConversionProblem,
     DocumentConverter,
     LibreOfficeToPdfConverter,
-    read_text_file,
+    TextReader,
 )
 from app.core.task_context import TaskContext
 from app.utils.file_utils import (
-    ensure_directory,
+    create_unique_directory,
+    discard_partial_outputs,
     get_filename,
     get_stem,
-    get_unique_path,
     temp_output_path,
 )
 from app.utils.logger import get_logger
@@ -84,8 +84,12 @@ from app.utils.logger import get_logger
 # que é trabalho do LibreOffice, continua funcionando.
 try:
     import openpyxl
+    from openpyxl.utils.exceptions import IllegalCharacterError
 except ImportError:  # pragma: no cover — depende do ambiente
     openpyxl = None  # type: ignore[assignment]
+
+    class IllegalCharacterError(Exception):  # type: ignore[no-redef]
+        """Só para o nome existir sem o openpyxl; nunca é levantada."""
 
 OPENPYXL_AVAILABLE = openpyxl is not None
 
@@ -214,20 +218,37 @@ def sniff_delimiter(sample: str) -> str:
     return melhor
 
 
-def read_csv_rows(path: Path) -> tuple[list[list[str]], str]:
-    """As linhas do CSV e o separador que foi reconhecido.
+# Quanto do começo do arquivo é lido para reconhecer o separador.
+_SNIFF_SAMPLE_CHARS = 8192
+
+
+def detect_csv_format(path: Path) -> tuple[str, str]:
+    """(codificação, separador) de um CSV, sem carregá-lo inteiro.
 
     A codificação é descoberta do mesmo jeito que num .txt (ver
-    `read_text_file`, da Fase 7): um CSV também não declara a sua.
+    `detect_text_encoding`): um CSV também não declara a sua. O separador
+    sai de uma amostra do começo do arquivo — só as linhas completas dela,
+    para uma linha cortada no fim da amostra não parecer ter menos colunas
+    que as outras.
     """
-    texto = read_text_file(path)
-    delimiter = sniff_delimiter(texto[:8192])
-    # `io.StringIO` em vez de reabrir o arquivo: o texto já foi
-    # decodificado, e o módulo csv precisa de quebras de linha
-    # normalizadas para não engolir a última linha sem \n.
-    leitor = csv.reader(io.StringIO(texto, newline=""), delimiter=delimiter)
+    with TextReader(path, newline="") as texto:
+        amostra = texto.handle.read(_SNIFF_SAMPLE_CHARS)
+        encoding = texto.encoding
+    if len(amostra) == _SNIFF_SAMPLE_CHARS and "\n" in amostra:
+        amostra = amostra[: amostra.rindex("\n") + 1]
+    return encoding, sniff_delimiter(amostra)
+
+
+def iter_csv_rows(texto: TextReader, delimiter: str, path: Path) -> Iterator[list[str]]:
+    """As linhas do CSV, uma de cada vez, com o erro de leitura traduzido.
+
+    O arquivo precisa ter sido aberto com `newline=""`: o módulo `csv`
+    trata sozinho as quebras de linha, inclusive as que ficam dentro de um
+    campo entre aspas.
+    """
+    leitor = csv.reader(texto.handle, delimiter=delimiter)
     try:
-        return [linha for linha in leitor], delimiter
+        yield from leitor
     except csv.Error as exc:
         raise ConversionProblem(
             f"'{get_filename(path)}' não pôde ser lido como CSV ({exc})."
@@ -293,7 +314,7 @@ class XlsxToCsvConverter(DocumentConverter):
                     f"'{get_filename(source)}' não tem nenhuma aba para converter."
                 )
 
-            destinos = self._sheet_destinations(abas, temp_output, destination)
+            pasta, destinos = self._sheet_destinations(abas, temp_output, destination)
             escritos: list[Path] = []
             try:
                 for indice, (aba, destino) in enumerate(zip(abas, destinos)):
@@ -304,8 +325,9 @@ class XlsxToCsvConverter(DocumentConverter):
                     context.report_step(indice + 1, len(abas))
             except BaseException:
                 # Uma conversão interrompida no meio não deixa CSVs pela
-                # metade — nem a subpasta vazia que os abrigava.
-                self._discard(escritos)
+                # metade — nem a subpasta que os abrigava, mesmo que a
+                # interrupção venha antes da primeira aba.
+                discard_partial_outputs(escritos, pasta)
                 raise
         finally:
             workbook.close()
@@ -318,25 +340,27 @@ class XlsxToCsvConverter(DocumentConverter):
 
     def _sheet_destinations(
         self, abas: list, temp_output: Path, destination: Path
-    ) -> list[Path]:
-        """Onde cada aba vai ser gravada.
+    ) -> tuple[Path | None, list[Path]]:
+        """Onde cada aba vai ser gravada, e a subpasta criada para elas.
 
         Uma aba: o arquivo temporário, que a classe base move para o
         destino pedido — é o caminho que já passou pelo fluxo de conflito
-        de nomes da interface. Várias abas: uma subpasta nova com o nome
-        da planilha, e o nome de cada aba no arquivo correspondente, para
-        que dê para saber de onde cada CSV veio.
+        de nomes da interface —, e nenhuma pasta nova. Várias abas: uma
+        subpasta nova com o nome da planilha, e o nome de cada aba no
+        arquivo correspondente, para que dê para saber de onde cada CSV
+        veio. A pasta volta junto para que uma falha consiga removê-la.
         """
         if len(abas) == 1:
-            return [temp_output]
+            return None, [temp_output]
 
         stem = get_stem(destination)
-        pasta = get_unique_path(destination.parent / stem)
-        ensure_directory(pasta)
+        # Criada de forma atômica: duas planilhas do mesmo lote convertidas
+        # em paralelo nunca acabam dividindo a mesma pasta.
+        pasta = create_unique_directory(destination.parent / stem)
         # O número mantém a ordem das abas visível e garante nomes
         # distintos: dois títulos diferentes podem virar o mesmo nome
         # depois de tirar os caracteres que não servem em arquivo.
-        return [
+        return pasta, [
             pasta / f"{stem}_{numero:02d}_{self._safe_name(aba.title)}{destination.suffix}"
             for numero, aba in enumerate(abas, start=1)
         ]
@@ -392,20 +416,6 @@ class XlsxToCsvConverter(DocumentConverter):
             pendentes.clear()
             yield campos
 
-    @staticmethod
-    def _discard(escritos: list[Path]) -> None:
-        pastas = {caminho.parent for caminho in escritos}
-        for caminho in escritos:
-            try:
-                caminho.unlink(missing_ok=True)
-            except OSError:  # pragma: no cover — arquivo em uso
-                logger.warning("Não foi possível remover o CSV parcial %s", caminho)
-        for pasta in pastas:
-            try:
-                pasta.rmdir()  # só remove se tiver ficado vazia
-            except OSError:
-                pass
-
 
 # --- CSV -> XLSX ----------------------------------------------------------
 
@@ -414,7 +424,7 @@ class CsvToXlsxConverter(DocumentConverter):
     """Monta uma planilha a partir de um CSV (openpyxl).
 
     O separador e a codificação do arquivo de entrada são descobertos por
-    evidência (ver `sniff_delimiter` e `read_text_file`), e o conteúdo de
+    evidência (ver `detect_csv_format`), e o conteúdo de
     cada campo só vira número quando não pode significar outra coisa.
     """
 
@@ -437,27 +447,56 @@ class CsvToXlsxConverter(DocumentConverter):
                 "habilitá-la."
             )
 
-        linhas, delimiter = read_csv_rows(source)
-        logger.debug("CSV '%s' lido com separador '%s'", get_filename(source), delimiter)
+        encoding, delimiter = detect_csv_format(source)
+        logger.debug(
+            "CSV '%s' lido como %s, com separador '%s'", get_filename(source), encoding, delimiter
+        )
 
         workbook = openpyxl.Workbook(write_only=True)
         try:
             # `write_only` grava linha a linha em vez de montar a planilha
-            # toda na memória, o que importa num CSV de centenas de
-            # milhares de linhas.
+            # toda na memória — e as linhas também vêm do arquivo uma de cada
+            # vez, para um CSV de centenas de milhares de linhas nunca estar
+            # inteiro na memória. O andamento é medido em bytes lidos.
             aba = workbook.create_sheet(title=self._sheet_title(source))
-            total = len(linhas)
-            for numero, campos in enumerate(linhas):
-                if numero % _PROGRESS_EVERY == 0:
-                    context.check_cancelled()
-                    context.report_step(numero, total)
-                aba.append([self._cell(aba, campo) for campo in campos])
+            try:
+                self._append_rows(aba, source, encoding, delimiter, context)
+            except BaseException:
+                # Interrompida no meio (cancelamento, erro), a aba fica com o
+                # XML dela aberto no gravador do openpyxl. Fechá-la aqui
+                # encerra esse XML em ordem — sem isso, o coletor de lixo o
+                # encerra depois, e o lxml reclama num aviso sem relação
+                # nenhuma com o que estiver rodando naquele momento.
+                with contextlib.suppress(Exception):
+                    aba.close()
+                raise
 
             context.check_cancelled()
             workbook.save(temp_output)
         finally:
             workbook.close()
         return None
+
+    def _append_rows(
+        self, aba, source: Path, encoding: str, delimiter: str, context: TaskContext
+    ) -> None:
+        with TextReader(source, newline="", encoding=encoding) as texto:
+            for numero, campos in enumerate(iter_csv_rows(texto, delimiter, source)):
+                if numero % _PROGRESS_EVERY == 0:
+                    context.check_cancelled()
+                    context.report(texto.percent_read())
+                try:
+                    aba.append([self._cell(aba, campo) for campo in campos])
+                except IllegalCharacterError as exc:
+                    # Caracteres de controle (um NUL, típico de arquivo
+                    # binário renomeado para .csv) não cabem numa célula
+                    # do Excel. Tirá-los mudaria o dado sem avisar; dizer
+                    # onde estão deixa o usuário decidir.
+                    raise ConversionProblem(
+                        f"'{get_filename(source)}' tem caracteres de controle que "
+                        f"uma planilha não aceita (linha {numero + 1}). Ele pode "
+                        "não ser um CSV de verdade."
+                    ) from exc
 
     @staticmethod
     def _sheet_title(source: Path) -> str:
@@ -494,7 +533,7 @@ class CsvToXlsxConverter(DocumentConverter):
 class SpreadsheetToPdfConverter(LibreOfficeToPdfConverter):
     """Converte uma planilha em PDF (LibreOffice headless).
 
-    Reaproveita inteiro o caminho que o DOCX já usava desde a Fase 7 — o
+    Reaproveita inteiro o caminho do DOCX — o
     programa externo é o mesmo, e a mecânica de pasta temporária e
     gravação atômica também.
 

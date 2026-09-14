@@ -1,14 +1,15 @@
 """
-Seletor de formato de destino (item 10 do briefing).
+Seletor de formato de destino.
 
 Nunca lista uma opção que a camada de compatibilidade não confirme
 como implementada. Quando não há nenhuma conversão disponível para os
-arquivos atuais (situação normal nas Fases 1-2, já que nenhum
-conversor está registrado), o combo mostra um placeholder claro em
-vez de ficar com opções inventadas.
+arquivos atuais, o combo mostra um placeholder claro em vez de ficar
+com opções inventadas.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable, Iterable
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QComboBox
@@ -21,8 +22,18 @@ _PLACEHOLDER = "Nenhum formato disponível ainda"
 class FormatSelector(QComboBox):
     format_selected = Signal(str)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(
+        self,
+        parent=None,
+        targets_for: Callable[[Iterable[str]], set[str]] | None = None,
+    ) -> None:
         super().__init__(parent)
+        # Quem responde "para onde estes formatos podem ir". A janela passa o
+        # `FileProcessor`, que é a porta única da interface para o núcleo;
+        # sem ele, vale o registro global.
+        self._targets_for = targets_for or (
+            lambda extensions: compatibility_registry.available_targets_for_many(set(extensions))
+        )
         self._available = False
         self.currentTextChanged.connect(self._on_text_changed)
         self.refresh([])
@@ -33,7 +44,7 @@ class FormatSelector(QComboBox):
         self.blockSignals(True)
         self.clear()
 
-        targets = compatibility_registry.available_targets_for_many(set(source_extensions))
+        targets = self._targets_for(source_extensions) if source_extensions else set()
         self._available = bool(targets) and bool(source_extensions)
 
         if self._available:

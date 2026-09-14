@@ -1,23 +1,32 @@
 """
-Arquitetura central de junção de arquivos (itens 12, 13 e 14 do briefing).
+Arquitetura central de junção de arquivos.
 
 Espelha `converter.py`, mas para a operação "Juntar": vários arquivos
-de entrada (possivelmente de formatos diferentes, via pipeline de
-conversão intermediária — item 13) resultam em um único arquivo de
-saída.
+de entrada (possivelmente de formatos diferentes, via conversão
+intermediária) resultam em um único arquivo de saída.
 
-O primeiro merger concreto chegou na Fase 4
-(`app/mergers/pdf_merger.py`, que une PDFs e imagens em um único PDF).
-Para as combinações sem merger registrado, o modo "Juntar" continua
-informando honestamente que a operação não existe nesta versão.
+O merger concreto é `app/mergers/pdf_merger.py`, que une PDFs, imagens
+e documentos em um único PDF. Para as combinações sem merger
+registrado, o modo "Juntar" informa honestamente que a operação não
+existe nesta instalação.
+
+**O destino nunca pode ser uma das entradas.** Juntar `a.pdf` e `b.pdf`
+salvando como `a.pdf` terminaria substituindo o original pelo resultado.
+A regra mora aqui (`find_input_conflict`) para valer em qualquer caminho
+até a gravação — a janela pergunta antes, o `FileProcessor` confere de
+novo e o próprio merger recusa —, sem depender de a interface ter
+lembrado de perguntar.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.core.task_context import TaskContext
+from app.utils.file_utils import refers_to_same_path
 
 
 @dataclass
@@ -49,13 +58,15 @@ class BaseMerger(ABC):
         output_path: str,
         context: TaskContext | None = None,
     ) -> MergeResult:
-        """Executa a junção, respeitando a ordem de `input_paths` (item 12:
-        "a ordem da lista deve determinar a ordem do arquivo final").
+        """Executa a junção, respeitando a ordem de `input_paths`: a ordem
+        da lista é a ordem do arquivo final.
 
-        `context` (Fase 5) é o canal com a fila, igual ao dos
-        conversores: por ele a junção reporta o andamento (arquivo 3 de
-        10) e verifica, entre um arquivo e outro, se o usuário mandou
-        parar."""
+        `context` é o canal com a fila, igual ao dos conversores: por ele a
+        junção reporta o andamento (arquivo 3 de 10) e verifica, entre um
+        arquivo e outro, se o usuário mandou parar.
+
+        Implementações devem recusar um `output_path` que seja uma das
+        entradas (`find_input_conflict`)."""
 
 
 class MergeCompatibilityRegistry:
@@ -92,6 +103,28 @@ class MergeCompatibilityRegistry:
         return None
 
 
-# Instância única compartilhada pelo aplicativo. Mergers concretos
-# (Fase 4 em diante) se registram aqui na inicialização do app.
+def find_input_conflict(input_paths: Sequence[str], output_path: str) -> str | None:
+    """A entrada que o destino substituiria, ou None se o destino é livre.
+
+    Compara com todas as entradas, e do jeito que o Windows compara nomes
+    (`refers_to_same_path`): `C:\\Docs\\A.pdf` e `c:/docs/a.PDF` são o
+    mesmo arquivo.
+    """
+    for path in input_paths:
+        if refers_to_same_path(path, output_path):
+            return path
+    return None
+
+
+def input_conflict_message(conflicting_input: str) -> str:
+    """A explicação para o usuário quando o destino é uma das entradas."""
+    return (
+        f"O arquivo final não pode ter o mesmo nome de '{Path(conflicting_input).name}', "
+        "que é um dos arquivos sendo juntados — ele seria substituído. Escolha "
+        "outro nome para o arquivo final. Nenhum arquivo foi alterado."
+    )
+
+
+# Instância única compartilhada pelo aplicativo. Os mergers concretos se
+# registram aqui na inicialização (ver `app/mergers/__init__.py`).
 merge_compatibility_registry = MergeCompatibilityRegistry()

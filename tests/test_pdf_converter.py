@@ -1,5 +1,5 @@
 """
-Testes dos conversores de PDF da Fase 4 (item 34 do briefing).
+Testes dos conversores de PDF.
 
 Como no teste do conversor de imagens, aqui a conversão acontece de
 verdade: os PDFs são gerados na hora com Pillow e relidos com PyMuPDF.
@@ -18,10 +18,13 @@ pytest.importorskip("pymupdf", reason="PyMuPDF é a dependência de PDF -> image
 from PIL import Image  # noqa: E402
 import pymupdf  # noqa: E402
 
-from app.converters import register_builtin_converters  # noqa: E402
+from app.converters import pdf_converter, register_builtin_converters  # noqa: E402
 from app.converters.pdf_converter import (  # noqa: E402
+    MAX_RENDER_PIXELS,
+    PDF_RENDER_DPI,
     ImageToPdfConverter,
     PdfToImageConverter,
+    render_zoom,
 )
 from app.core.converter import CompatibilityRegistry  # noqa: E402
 
@@ -37,6 +40,16 @@ def _make_pdf(path: Path, pages: int = 1) -> Path:
         Image.new("RGB", (120, 80), (40 * (index + 1) % 256, 80, 200)) for index in range(pages)
     ]
     images[0].save(path, format="PDF", save_all=True, append_images=images[1:])
+    return path
+
+
+def _make_blank_pdf(path: Path, width: float, height: float) -> Path:
+    """PDF de uma página em branco do tamanho pedido, em pontos. Serve às
+    páginas fora do comum, que o Pillow não teria como gerar leves."""
+    document = pymupdf.open()
+    document.new_page(width=width, height=height)
+    document.save(path)
+    document.close()
     return path
 
 
@@ -194,6 +207,83 @@ def test_unsupported_target_is_refused(tmp_path: Path) -> None:
     assert not (tmp_path / "doc.docx").exists()
 
 
+def test_failure_on_the_first_page_leaves_no_empty_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A subpasta das páginas é criada antes da primeira página. Uma falha
+    logo nela deixava a pasta vazia para trás, porque a limpeza deduzia a
+    pasta dos arquivos gravados — e não havia nenhum."""
+    source = _make_pdf(tmp_path / "relatorio.pdf", pages=3)
+    output_dir = tmp_path / "saida"
+
+    def disco_cheio(*_args, **_kwargs) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(PdfToImageConverter, "_render_page", disco_cheio)
+
+    result = PdfToImageConverter().convert(str(source), str(output_dir / "relatorio.png"))
+
+    assert not result.success
+    assert "No space left" in (result.error_message or "")
+    assert not (output_dir / "relatorio").exists()
+    # A pasta de destino do usuário não é da conversão, e continua lá.
+    assert output_dir.is_dir()
+
+
+# --- Páginas enormes -----------------------------------------------------
+
+
+def test_normal_pages_keep_the_standard_resolution() -> None:
+    assert render_zoom(595, 842, "png") == pytest.approx(PDF_RENDER_DPI / 72)  # A4
+    assert render_zoom(595, 842, "webp") == pytest.approx(PDF_RENDER_DPI / 72)
+
+
+def test_huge_page_fits_the_pixel_ceiling() -> None:
+    """200 x 200 polegadas a 150 dpi dariam 900 milhões de pixels."""
+    zoom = render_zoom(14400, 14400, "png")
+
+    assert (14400 * zoom) ** 2 <= MAX_RENDER_PIXELS
+
+
+def test_long_page_fits_the_webp_side_limit() -> None:
+    assert 12000 * render_zoom(612, 12000, "webp") < 16383
+    # O limite é do WEBP: em PNG a mesma página não perde resolução.
+    assert render_zoom(612, 12000, "png") == pytest.approx(PDF_RENDER_DPI / 72)
+
+
+def test_huge_page_is_downscaled_whole_instead_of_exhausting_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Um teto pequeno faz o teste exercitar a redução sem precisar
+    # renderizar dezenas de milhões de pixels de verdade.
+    monkeypatch.setattr(pdf_converter, "MAX_RENDER_PIXELS", 40_000)
+    source = _make_blank_pdf(tmp_path / "planta.pdf", width=600, height=300)
+    destination = tmp_path / "planta.png"
+
+    result = PdfToImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        width, height = image.size
+    # Um pixel de folga por lado: o PyMuPDF arredonda o tamanho para cima.
+    assert (width - 1) * (height - 1) <= 40_000
+    # A página inteira, só que menor: nada foi recortado.
+    assert width / height == pytest.approx(2, rel=0.02)
+
+
+def test_long_page_becomes_a_webp_within_the_format_limit(tmp_path: Path) -> None:
+    """72 x 8000 pontos a 150 dpi dariam 16667 px de altura, acima dos
+    16383 que o WEBP aceita — o que antes terminava em "erro inesperado"."""
+    source = _make_blank_pdf(tmp_path / "extrato.pdf", width=72, height=8000)
+    destination = tmp_path / "extrato.webp"
+
+    result = PdfToImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert max(image.size) <= 16383
+
+
 # --- Registro ------------------------------------------------------------
 
 
@@ -205,7 +295,7 @@ def test_registry_offers_both_directions() -> None:
     assert registry.can_convert("png", "pdf")
     assert registry.can_convert("jpg", "pdf")
     assert registry.can_convert("pdf", "png")
-    # O TXT entrou nesta lista na Fase 7, junto com a extração de texto.
+    # O TXT está nesta lista por causa da extração de texto.
     assert registry.available_targets_for("pdf") == {"png", "jpg", "webp", "txt"}
     # Imagens agora podem virar PDF, além dos outros formatos de imagem.
     assert registry.available_targets_for("png") == {"png", "jpg", "webp", "pdf"}

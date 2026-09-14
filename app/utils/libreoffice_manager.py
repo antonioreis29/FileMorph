@@ -1,12 +1,12 @@
 """
-Módulo dedicado ao LibreOffice em modo headless (FASE 7).
+Módulo dedicado ao LibreOffice em modo headless.
 
 É o segundo binário externo do projeto, depois do FFmpeg, e existe por
 um motivo só: **converter DOCX em PDF com fidelidade**. Um DOCX não é
 um arquivo de texto — é um pacote de XML com estilos, tabelas, imagens
 e quebras de página. Reimplementar esse layout em Python daria um PDF
 parecido com o documento em casos simples e bem diferente dele em
-qualquer documento real, e o princípio do projeto (item 37) é não
+qualquer documento real, e o princípio do projeto é não
 oferecer uma operação que entregue menos do que o usuário espera. Quem
 sabe paginar um DOCX é um processador de texto, então é um processador
 de texto que faz esse trabalho.
@@ -38,8 +38,7 @@ LibreOffice:
    (`-env:UserInstallation`) e o cadeado que serializa as execuções —
    ver `_RUN_LOCK`.
 
-Como o FFmpeg, este módulo é livre de Qt e nunca usa `shell=True`
-(item 31).
+Como o FFmpeg, este módulo é livre de Qt e nunca usa `shell=True`.
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,7 +120,7 @@ class LibreOfficeError(Exception):
     """Falha na conversão via LibreOffice, já traduzida para o usuário.
 
     A mensagem é escrita para ser exibida na interface; o relatório
-    técnico completo fica no log (item 23).
+    técnico completo fica no log.
     """
 
 
@@ -130,6 +129,11 @@ class LibreOfficeStatus:
     available: bool
     executable_path: str | None
     version: str | None
+
+
+# Página oficial de download, oferecida quando o LibreOffice não está
+# instalado. O FileMorph nunca baixa nem instala o programa sozinho.
+LIBREOFFICE_DOWNLOAD_URL = "https://www.libreoffice.org/download/download-libreoffice/"
 
 
 # Trechos conhecidos da saída do LibreOffice e o que eles significam para
@@ -233,14 +237,21 @@ def _read_version(executable: Sequence[str]) -> str | None:
     return lines[0].replace("LibreOffice", "").strip().split(" ")[0] or None
 
 
-def detect_libreoffice() -> LibreOfficeStatus:
+def detect_libreoffice(
+    candidates: Sequence[str] | None = None,
+    read_version: Callable[[Sequence[str]], str | None] | None = None,
+) -> LibreOfficeStatus:
     """Procura o LibreOffice no PATH e nos diretórios de instalação.
 
     Nunca lança exceção: qualquer problema vira `available=False`, para
     que o aplicativo continue abrindo normalmente sem as conversões que
-    dependem dele (item 30).
+    dependem dele.
+
+    Os parâmetros existem para os testes, que não podem depender de o
+    LibreOffice estar instalado na máquina que roda a suíte.
     """
-    for candidate in _candidate_paths():
+    read_version = read_version or _read_version
+    for candidate in candidates if candidates is not None else _candidate_paths():
         path = Path(candidate)
         try:
             if not path.is_file():
@@ -251,7 +262,7 @@ def detect_libreoffice() -> LibreOfficeStatus:
         return LibreOfficeStatus(
             available=True,
             executable_path=str(path),
-            version=_read_version([str(path)]),
+            version=read_version([str(path)]),
         )
 
     return LibreOfficeStatus(available=False, executable_path=None, version=None)
@@ -312,10 +323,11 @@ class LibreOfficeManager:
 
         O diretório é criado uma vez por execução do FileMorph e
         reaproveitado — montar um perfil novo custa alguns segundos, e
-        pagá-los a cada arquivo de um lote seria bobagem. Ele fica no
-        diretório temporário do `temp_manager`, que é esvaziado na
-        abertura do aplicativo: é assim que o perfil de uma execução
-        anterior não fica acumulando na máquina (item 24).
+        pagá-los a cada arquivo de um lote seria bobagem. Ele fica na
+        pasta temporária desta execução, do `temp_manager`, que é
+        apagada quando o aplicativo fecha (e, se ele cair, na abertura
+        seguinte): é assim que o perfil de uma execução anterior não
+        fica acumulando na máquina.
         """
         if self._profile_dir is None:
             self._profile_dir = temp_manager.session_dir(temp_manager.new_session())

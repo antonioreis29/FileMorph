@@ -1,42 +1,64 @@
 """
-Arquitetura central de conversão (itens 4, 10 e 14 do briefing).
+Arquitetura central de conversão.
 
 Este módulo define:
 
 1. `BaseConverter` — a interface que qualquer conversor concreto
-   (Pillow, pypdf, FFmpeg, LibreOffice...) deve implementar. A UI e o
+   (Pillow, PyMuPDF, FFmpeg, LibreOffice...) deve implementar. A UI e o
    `processor.py` nunca falam diretamente com Pillow/FFmpeg/etc — só
-   com essa interface. É isso que garante o princípio fundamental do
-   item 4: "o usuário não deve precisar saber qual biblioteca está
-   sendo utilizada".
+   com essa interface. É isso que garante que o usuário não precise
+   saber qual biblioteca está sendo utilizada.
 
 2. `CompatibilityRegistry` — a camada que responde "posso converter
    X para Y?" (`can_convert`). A UI consulta esse registro para nunca
-   oferecer uma combinação que não tenha implementação real (item 14).
+   oferecer uma combinação que não tenha implementação real.
 
 Importante: o registro começa vazio e só passa a responder `True`
-quando um conversor real é implementado e registrado (por
-`app/converters/__init__.py`, na inicialização), evitando qualquer
-funcionalidade fictícia na interface (item 37).
+quando um conversor real é registrado (por `app/converters/__init__.py`,
+na inicialização), evitando qualquer funcionalidade fictícia na
+interface.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.core.task_context import TaskContext
+from app.utils.file_utils import refers_to_same_path
 
 
 @dataclass
 class ConversionResult:
     """Resultado de uma conversão individual, usado tanto para sucesso
-    quanto para falha (item 22: erros tratados por arquivo)."""
+    quanto para falha: os erros são tratados arquivo por arquivo."""
 
     success: bool
     input_path: str
     output_path: str | None = None
     error_message: str | None = None
+
+
+def refuse_overwriting_source(input_path: str, output_path: str) -> ConversionResult | None:
+    """Uma falha pronta se o destino é o próprio arquivo de origem; senão None.
+
+    Converter `foto.png` em PNG gravando em `foto.png` leria e escreveria
+    o mesmo arquivo — e a gravação atômica terminaria trocando o original
+    pelo resultado. O `FileProcessor` já nunca escolhe um destino assim
+    (ver `output_planner.py`); esta é a rede de segurança para quem chama
+    um conversor diretamente.
+    """
+    if not refers_to_same_path(input_path, output_path):
+        return None
+    return ConversionResult(
+        success=False,
+        input_path=input_path,
+        error_message=(
+            f"O arquivo convertido não pode substituir o original "
+            f"'{Path(input_path).name}'. Escolha outro nome ou outra pasta."
+        ),
+    )
 
 
 class BaseConverter(ABC):
@@ -64,11 +86,12 @@ class BaseConverter(ABC):
         """Executa a conversão de um único arquivo.
 
         Implementações devem: nunca modificar/apagar o arquivo original
-        (item 18), capturar exceções e retornar um ConversionResult com
+        (e recusar um destino que seja ele — `refuse_overwriting_source`),
+        capturar exceções e retornar um ConversionResult com
         `success=False` e uma mensagem amigável em vez de propagar o
-        traceback para a UI (item 22).
+        traceback para a UI.
 
-        `context` (Fase 5) é o canal com a fila: por ele a conversão
+        `context` é o canal com a fila: por ele a conversão
         informa o andamento e descobre que o usuário pediu para parar.
         É opcional porque um conversor também pode ser chamado fora da
         fila — nesse caso não há progresso a reportar nem cancelamento
@@ -81,8 +104,8 @@ class BaseConverter(ABC):
 class CompatibilityRegistry:
     """Registro central de quais conversões são possíveis, e por quem.
 
-    A UI usa `can_convert` para filtrar o seletor de formato (item 10)
-    e `get_converter` para de fato delegar a execução (via processor.py).
+    A UI usa `can_convert` para filtrar o seletor de formato e
+    `get_converter` para de fato delegar a execução (via processor.py).
     """
 
     def __init__(self) -> None:
@@ -110,7 +133,7 @@ class CompatibilityRegistry:
     def available_targets_for(self, source_ext: str) -> set[str]:
         """Todos os formatos de destino possíveis para uma extensão de
         origem, considerando todos os conversores registrados. Usado
-        pelo seletor de formato para popular as opções (item 10)."""
+        pelo seletor de formato para popular as opções."""
         source_ext = source_ext.lower().lstrip(".")
         targets: set[str] = set()
         for converter in self._converters:
@@ -136,6 +159,6 @@ def resolve_output_extension(target_ext: str) -> str:
     return target_ext.lower().lstrip(".")
 
 
-# Instância única compartilhada pelo aplicativo. Conversores concretos
-# (Fases 3+) se registram aqui na inicialização do app.
+# Instância única compartilhada pelo aplicativo. Os conversores concretos
+# se registram aqui na inicialização (ver `app/converters/__init__.py`).
 compatibility_registry = CompatibilityRegistry()

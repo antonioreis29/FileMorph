@@ -1,5 +1,5 @@
 """
-Testes dos conversores de planilha da Fase 9 (item 34 do briefing).
+Testes dos conversores de planilha.
 
 Os dois caminhos entre XLSX e CSV são Python puro (openpyxl) e rodam de
 verdade aqui: a planilha é criada na hora e o resultado é conferido
@@ -284,6 +284,31 @@ def test_xlsx_to_csv_cancellation_leaves_nothing_behind(tmp_path: Path) -> None:
     assert _leftovers(tmp_path) == []
 
 
+def test_cancellation_right_after_the_folder_is_created_removes_it(tmp_path: Path) -> None:
+    """A classe base confere o cancelamento antes de começar, mas o pedido
+    pode chegar entre essa conferência e a primeira aba — com a subpasta
+    já criada e nenhum CSV gravado. É o caso que o teste acima não alcança."""
+    workbook = openpyxl.Workbook()
+    for numero in range(3):
+        aba = workbook.active if numero == 0 else workbook.create_sheet(f"Aba{numero}")
+        aba.append(["x", numero])
+    source = tmp_path / "varias.xlsx"
+    workbook.save(str(source))
+    conferencias: list[bool] = []
+
+    def cancela_na_segunda_conferencia() -> bool:
+        conferencias.append(True)
+        return len(conferencias) > 1
+
+    context = TaskContext(is_cancelled=cancela_na_segunda_conferencia)
+
+    with pytest.raises(OperationCancelled):
+        XlsxToCsvConverter().convert(str(source), str(tmp_path / "varias.csv"), context)
+
+    assert not (tmp_path / "varias").exists()
+    assert _leftovers(tmp_path) == []
+
+
 # --- CSV -> XLSX -----------------------------------------------------------
 
 
@@ -338,6 +363,112 @@ def test_csv_with_windows_encoding_is_read(tmp_path: Path) -> None:
     assert _cells(destination) == [("Ação", "coração")]
 
 
+def _write_big_csv(path: Path, rows: int, last_row: bytes = b"") -> Path:
+    with open(path, "wb") as handle:
+        for numero in range(rows):
+            handle.write(f"{numero};produto {numero};{numero},5;0{numero % 1000:03d}\n".encode("ascii"))
+        handle.write(last_row)
+    return path
+
+
+def test_large_csv_is_read_as_a_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """O CSV não é carregado inteiro antes da conversão começar: quando o
+    usuário cancela logo no começo, só uma pequena parte do arquivo foi lida.
+
+    (Carregar tudo numa lista, como antes, ocupava ~80 MB de memória para um
+    CSV de 6 MB; lendo aos poucos, a conversão inteira fica em poucos MB.)
+    """
+    from app.converters import document_converter
+
+    source = _write_big_csv(tmp_path / "grande.csv", rows=60_000)
+    seen: list[int] = []
+    real_percent = document_converter.TextReader.percent_read
+
+    def spy(self) -> int:
+        value = real_percent(self)
+        seen.append(value)
+        return value
+
+    monkeypatch.setattr(document_converter.TextReader, "percent_read", spy)
+    reports: list[int] = []
+    context = TaskContext(on_progress=reports.append, is_cancelled=lambda: len(reports) >= 2)
+
+    with pytest.raises(OperationCancelled):
+        CsvToXlsxConverter().convert(str(source), str(tmp_path / "grande.xlsx"), context)
+
+    assert seen and max(seen) < 20
+    assert not (tmp_path / "grande.xlsx").exists()
+    assert _leftovers(tmp_path) == []
+
+
+def test_csv_is_never_loaded_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _write_big_csv(tmp_path / "dados.csv", rows=500)
+
+    def forbidden(self, *args, **kwargs):
+        if Path(self) == source:
+            raise AssertionError("o CSV foi lido inteiro de uma vez")
+        return real_read_bytes(self, *args, **kwargs)
+
+    real_read_bytes = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", forbidden)
+    monkeypatch.setattr(Path, "read_text", forbidden)
+
+    result = CsvToXlsxConverter().convert(str(source), str(tmp_path / "dados.xlsx"))
+
+    assert result.success, result.error_message
+    monkeypatch.undo()
+    assert len(_cells(tmp_path / "dados.xlsx")) == 500
+
+
+def test_windows_encoding_far_from_the_start_is_still_detected(tmp_path: Path) -> None:
+    """Mais de 1 MB de linhas sem acento e, só no fim, um "ã" em cp1252.
+    Decidir a codificação por uma amostra do começo quebraria no meio da
+    conversão; a codificação é conferida no arquivo inteiro."""
+    source = _write_big_csv(
+        tmp_path / "exportacao.csv", rows=40_000, last_row="fim;Ação;coração\n".encode("cp1252")
+    )
+
+    result = CsvToXlsxConverter().convert(str(source), str(tmp_path / "exportacao.xlsx"))
+
+    assert result.success, result.error_message
+    workbook = openpyxl.load_workbook(str(tmp_path / "exportacao.xlsx"), read_only=True)
+    try:
+        last = list(workbook.active.iter_rows(values_only=True))[-1]
+    finally:
+        workbook.close()
+    assert last[:3] == ("fim", "Ação", "coração")
+
+
+def test_csv_progress_moves_forward_and_ends_at_100(tmp_path: Path) -> None:
+    source = _write_big_csv(tmp_path / "medio.csv", rows=5_000)
+    reports: list[int] = []
+
+    result = CsvToXlsxConverter().convert(
+        str(source), str(tmp_path / "medio.xlsx"), TaskContext(on_progress=reports.append)
+    )
+
+    assert result.success, result.error_message
+    assert reports == sorted(reports)
+    assert reports[-1] == 100
+    assert len(reports) > 2
+
+
+def test_control_characters_give_a_clear_message(tmp_path: Path) -> None:
+    """Um NUL (arquivo binário renomeado para .csv, por exemplo) não cabe
+    numa célula do Excel. Antes isso virava "erro inesperado"; agora a
+    mensagem diz o que é e em que linha está, e nada fica pela metade."""
+    source = tmp_path / "nulo.csv"
+    source.write_bytes(b"a;b\nc;\x00d\n")
+
+    result = CsvToXlsxConverter().convert(str(source), str(tmp_path / "nulo.xlsx"))
+
+    assert not result.success
+    assert "caracteres de controle" in result.error_message
+    assert "linha 2" in result.error_message
+    assert not (tmp_path / "nulo.xlsx").exists()
+    assert _leftovers(tmp_path) == []
+
+
 def test_sheet_title_comes_from_the_file_name(tmp_path: Path) -> None:
     source = tmp_path / "vendas de janeiro.csv"
     source.write_text("a;1\n", encoding="utf-8")
@@ -381,6 +512,7 @@ def test_source_is_never_modified(tmp_path: Path) -> None:
 # --- XLSX -> PDF (LibreOffice) --------------------------------------------
 
 
+@pytest.mark.integration
 def test_spreadsheet_to_pdf_goes_through_libreoffice(tmp_path: Path) -> None:
     source = _write_xlsx(tmp_path / "relatorio.xlsx", [["a", 1]])
     destination = tmp_path / "relatorio.pdf"
@@ -412,9 +544,14 @@ def test_spreadsheet_to_pdf_without_libreoffice_explains_itself(tmp_path: Path) 
 # --- Camada de compatibilidade -------------------------------------------
 
 
+class _NoLibreOffice:
+    def is_available(self) -> bool:
+        return False
+
+
 def test_spreadsheet_converters_are_registered() -> None:
     registry = CompatibilityRegistry()
-    register_builtin_converters(registry)
+    register_builtin_converters(registry, libreoffice=_NoLibreOffice())
 
     assert registry.can_convert("xlsx", "csv")
     assert registry.can_convert("csv", "xlsx")
@@ -423,10 +560,16 @@ def test_spreadsheet_converters_are_registered() -> None:
     assert not registry.can_convert("xlsx", "docx")
 
 
-def test_xlsx_to_pdf_is_offered_only_with_libreoffice() -> None:
-    from app.utils.libreoffice_manager import libreoffice_manager
-
+def test_xlsx_to_pdf_is_not_offered_without_libreoffice() -> None:
     registry = CompatibilityRegistry()
-    register_builtin_converters(registry)
+    register_builtin_converters(registry, libreoffice=_NoLibreOffice())
 
-    assert registry.can_convert("xlsx", "pdf") == libreoffice_manager.is_available()
+    assert not registry.can_convert("xlsx", "pdf")
+
+
+@pytest.mark.integration
+def test_xlsx_to_pdf_is_offered_with_libreoffice() -> None:
+    registry = CompatibilityRegistry()
+    register_builtin_converters(registry, libreoffice=_fake_libreoffice())
+
+    assert registry.can_convert("xlsx", "pdf")

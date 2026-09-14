@@ -1,6 +1,5 @@
 """
-Testes de progresso e cancelamento dentro das operações reais
-(Fase 5 — itens 16, 17 e 34).
+Testes de progresso e cancelamento dentro das operações reais.
 
 Aqui não se testa a fila em si (isso é `test_task_queue.py`), e sim o
 lado de dentro: um PDF de muitas páginas realmente avisa o quanto já
@@ -36,6 +35,11 @@ def _make_pdf(path: Path, pages: int) -> Path:
     images = [Image.new("RGB", (80, 60), (30, 90, 180)) for _ in range(pages)]
     images[0].save(path, format="PDF", save_all=True, append_images=images[1:])
     return path
+
+
+def _temp_sessions() -> set[Path]:
+    """As sessões temporárias desta execução (o arquivo de trava não conta)."""
+    return {p for p in temp_manager.instance_dir.iterdir() if p.is_dir()}
 
 
 class _Recorder:
@@ -96,7 +100,7 @@ def test_image_conversion_reports_completion(tmp_path: Path) -> None:
 
 def test_cancelling_a_pdf_conversion_leaves_no_half_written_pages(tmp_path: Path) -> None:
     """Interromper no meio não pode deixar páginas soltas — nem a subpasta
-    vazia — na pasta de saída (itens 17 e 24)."""
+    vazia — na pasta de saída."""
     source = _make_pdf(tmp_path / "livro.pdf", pages=6)
     output_dir = tmp_path / "saida"
     recorder = _Recorder(cancel_after=2)  # para depois de duas páginas
@@ -110,11 +114,26 @@ def test_cancelling_a_pdf_conversion_leaves_no_half_written_pages(tmp_path: Path
     assert not (output_dir / "livro").exists()
 
 
+def test_cancelling_before_the_first_page_removes_the_new_folder(tmp_path: Path) -> None:
+    """O pedido de parar pode chegar com a subpasta já criada e nenhuma
+    página gravada. A limpeza deduzia a pasta das páginas escritas, e sem
+    nenhuma a pasta vazia ficava para trás."""
+    source = _make_pdf(tmp_path / "livro.pdf", pages=4)
+    output_dir = tmp_path / "saida"
+    always_cancelled = TaskContext(is_cancelled=lambda: True)
+
+    with pytest.raises(OperationCancelled):
+        PdfToImageConverter().convert(
+            str(source), str(output_dir / "livro.png"), always_cancelled
+        )
+
+    assert not (output_dir / "livro").exists()
+
+
 def test_cancelling_a_merge_leaves_no_output_and_no_temp_files(tmp_path: Path) -> None:
     entradas = [str(_make_png(tmp_path / f"foto{i}.png")) for i in range(4)]
     destination = tmp_path / "album.pdf"
-    temp_root = Path(temp_manager.session_dir("x")).parent
-    before = set(temp_root.glob("*")) if temp_root.exists() else set()
+    before = _temp_sessions()
     recorder = _Recorder(cancel_after=1)
 
     with pytest.raises(OperationCancelled):
@@ -122,8 +141,7 @@ def test_cancelling_a_merge_leaves_no_output_and_no_temp_files(tmp_path: Path) -
 
     assert not destination.exists()
     assert list(tmp_path.glob(".*")) == []  # nenhum temporário de gravação
-    after = set(temp_root.glob("*")) if temp_root.exists() else set()
-    assert after == before  # nenhum intermediário deixado para trás
+    assert _temp_sessions() == before  # nenhum intermediário deixado para trás
 
 
 def test_cancelling_a_merge_preserves_an_existing_output(tmp_path: Path) -> None:
