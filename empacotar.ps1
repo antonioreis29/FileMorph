@@ -18,7 +18,8 @@
          maquina.
       5. Inno Setup embrulha a pasta em dist\installer\
          FileMorph-<versao>-setup.exe — o arquivo a ser compartilhado.
-      6. Calcula o SHA-256 do setup.exe (arquivo .sha256 ao lado).
+      6. Calcula o SHA-256 do setup.exe (arquivo .sha256 ao lado) e apaga
+         os setup.exe de versoes anteriores que estavam em dist\installer.
       7. Com -Portatil: gera dist\portable\FileMorph-<versao>-portable.exe
          (PyInstaller onefile), verifica e calcula o SHA-256 dele.
 
@@ -253,6 +254,39 @@ function Write-Sha256 {
     return $hash
 }
 
+function Remove-VersoesAntigas {
+    <#
+        Apaga os artefatos de versoes anteriores que ficaram na pasta de
+        saida, para ela conter so o da versao atual.
+
+        So e chamada depois que o artefato novo existe e foi verificado:
+        um build que falha nunca deixa a pasta sem instalador. Remove
+        apenas ARQUIVOS, dentro da pasta passada, cujo nome bate exatamente
+        com FileMorph-x.y.z-<Sufixo>.exe (e o .sha256 ao lado) e cuja versao
+        seja diferente da atual. Nada de subpastas, nada de curingas soltos.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Pasta,
+        [Parameter(Mandatory)][ValidateSet('setup', 'portable')][string]$Sufixo,
+        [Parameter(Mandatory)][string]$VersaoAtual
+    )
+
+    $pastaDist = [System.IO.Path]::GetFullPath($Dist).TrimEnd('\')
+    $alvo = [System.IO.Path]::GetFullPath($Pasta).TrimEnd('\')
+    if ((Split-Path -Parent $alvo) -ne $pastaDist) {
+        throw "Recusando limpar '$alvo': so pastas diretamente dentro de '$pastaDist' sao limpas."
+    }
+    if (-not (Test-Path -LiteralPath $alvo -PathType Container)) { return }
+
+    $padrao = '^FileMorph-(\d+\.\d+\.\d+)-' + $Sufixo + '\.exe(\.sha256)?$'
+    Get-ChildItem -LiteralPath $alvo -File | ForEach-Object {
+        if ($_.Name -match $padrao -and $Matches[1] -ne $VersaoAtual) {
+            Remove-Item -LiteralPath $_.FullName -Force
+            Write-Info "Removido de uma versao anterior: $($_.Name)"
+        }
+    }
+}
+
 
 Write-Host ''
 Write-Host '  FileMorph - empacotamento' -ForegroundColor White
@@ -379,6 +413,7 @@ Para gerar so o executavel, rode com -SomenteExe.
     if ($setup) {
         $hash = Write-Sha256 -Arquivo $setup
         Write-Ok "$hash  FileMorph-$versao-setup.exe"
+        Remove-VersoesAntigas -Pasta (Split-Path -Parent $setup) -Sufixo 'setup' -VersaoAtual $versao
     } else {
         Write-Info 'Sem instalador, sem hash.'
     }
@@ -403,6 +438,7 @@ Para gerar so o executavel, rode com -SomenteExe.
         Invoke-SmokeTest -Executavel $portatilExe
         $hash = Write-Sha256 -Arquivo $portatilExe
         Write-Ok "$hash  FileMorph-$versao-portable.exe"
+        Remove-VersoesAntigas -Pasta $distPortatil -Sufixo 'portable' -VersaoAtual $versao
     } else {
         Write-Passo '[7/7] Portatil nao pedido (use -Portatil)'
     }
