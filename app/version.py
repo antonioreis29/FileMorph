@@ -34,3 +34,11 @@ APP_PUBLISHER = "Antonio Reis"
 # Endereco do projeto, oferecido pelo Painel de Controle no link
 # "Suporte".
 APP_URL = "https://github.com/antonioreis29/FileMorph"
+
+# Identidade do aplicativo para a barra de tarefas do Windows
+# (AppUserModelID). Sem ela, o Windows agrupa a janela sob o processo que a
+# abriu — rodando pelo código-fonte, o python.exe, com o ícone do Python.
+# Os atalhos do instalador carregam o mesmo valor, para que fixar o
+# FileMorph na barra e abri-lo caiam no mesmo botão. Deve permanecer igual
+# para sempre, pelo mesmo motivo do AppId do instalador.
+APP_USER_MODEL_ID = "AntonioReis.FileMorph"

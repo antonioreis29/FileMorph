@@ -72,9 +72,16 @@ def main() -> int:
     register_builtin_mergers()
     register_builtin_organizers()
 
+    from app.utils.app_identity import apply_application_icon, set_windows_app_user_model_id
+
+    # Antes de qualquer janela: é o que tira o FileMorph do grupo do
+    # python.exe na barra de tarefas e mostra o ícone do Ditto.
+    set_windows_app_user_model_id()
+
     app = QApplication(sys.argv)
     app.setApplicationName("FileMorph")
     app.setOrganizationName("FileMorph")
+    apply_application_icon(app)
     # Os temporários desta execução saem junto com ela.
     app.aboutToQuit.connect(temp_manager.cleanup_own)
 

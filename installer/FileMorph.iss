@@ -37,6 +37,10 @@
 #endif
 #define MyAppName "FileMorph"
 #define MyAppExeName "FileMorph.exe"
+; Precisa ser igual a APP_USER_MODEL_ID em app/version.py (um teste
+; confere): e o que junta o atalho fixado e a janela aberta no mesmo botao
+; da barra de tarefas, com o icone do FileMorph.
+#define MyAppUserModelID "AntonioReis.FileMorph"
 
 [Setup]
 ; O AppId identifica o programa entre versoes. Trocar este valor faria
@@ -108,9 +112,9 @@ Name: "desktopicon"; Description: "Criar um atalho na Area de Trabalho"; GroupDe
 Source: "..\dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "{#MyAppUserModelID}"; Tasks: desktopicon
 
 [Run]
 ; nowait e postinstall deixam a marcacao "abrir agora" na ultima tela,
