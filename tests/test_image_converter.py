@@ -33,12 +33,12 @@ def _make_jpg(path: Path, size: tuple[int, int] = (12, 8)) -> Path:
     return path
 
 
-def test_declared_formats_cover_png_jpg_webp() -> None:
+def test_declared_formats() -> None:
     converter = ImageConverter()
-    assert {"png", "jpg", "jpeg", "webp"} <= converter.source_formats
-    # 'jpeg' nao entra nos destinos: seria uma segunda opcao identica a
-    # 'jpg' no seletor de formato.
-    assert converter.target_formats == {"png", "jpg", "webp"}
+    assert {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif"} <= converter.source_formats
+    # 'jpeg' e 'tif' nao entram nos destinos: seriam segundas opcoes
+    # identicas a 'jpg' e 'tiff' no seletor de formato.
+    assert converter.target_formats == {"png", "jpg", "webp", "bmp", "tiff", "gif"}
 
 
 def test_png_to_jpg_flattens_transparency(tmp_path: Path) -> None:
@@ -287,4 +287,194 @@ def test_register_builtin_converters_is_idempotent() -> None:
     assert second == []
     # Uma segunda chamada não pode duplicar conversores nem mudar o que
     # o seletor de formato oferece.
-    assert registry.available_targets_for("png") == {"png", "jpg", "webp", "pdf"}
+    assert registry.available_targets_for("png") == {
+        "png", "jpg", "webp", "bmp", "tiff", "gif", "pdf"
+    }
+
+
+# --- BMP, TIFF e GIF -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("source_format, ext", [("BMP", "bmp"), ("TIFF", "tif"), ("GIF", "gif")])
+@pytest.mark.parametrize("target", ["png", "jpg", "webp", "bmp", "tiff", "gif"])
+def test_new_formats_convert_in_every_direction(
+    tmp_path: Path, source_format: str, ext: str, target: str
+) -> None:
+    source = tmp_path / f"figura.{ext}"
+    Image.new("RGB", (30, 20), (10, 120, 200)).save(source, format=source_format)
+    destination = tmp_path / "saida" / f"figura.{target}"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.format == {"jpg": "JPEG"}.get(target, target.upper())
+        assert image.size == (30, 20)
+
+
+def test_tif_extension_is_accepted_as_an_alias(tmp_path: Path) -> None:
+    source = _make_png(tmp_path / "figura.png")
+    destination = tmp_path / "figura.tif"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.format == "TIFF"
+
+
+def test_png_to_bmp_flattens_transparency_onto_white(tmp_path: Path) -> None:
+    """O BMP aceita RGBA e descarta o alfa em silêncio: sem achatar, a área
+    transparente mostraria a cor escondida por baixo dela."""
+    source = _make_png(tmp_path / "recorte.png", alpha=0)
+    destination = tmp_path / "recorte.bmp"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.mode == "RGB"
+        assert image.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_png_to_gif_turns_partial_transparency_into_all_or_nothing(tmp_path: Path) -> None:
+    source = tmp_path / "logo.png"
+    image = Image.new("RGBA", (3, 1), (0, 0, 0, 0))
+    image.putpixel((0, 0), (0, 0, 0, 40))  # sombra quase transparente
+    image.putpixel((1, 0), (255, 0, 0, 255))
+    image.putpixel((2, 0), (255, 0, 0, 128))
+    image.save(source, format="PNG")
+    destination = tmp_path / "logo.gif"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as gif:
+        pixels = [gif.convert("RGBA").getpixel((x, 0)) for x in range(3)]
+    # A sombra some em vez de virar um pixel preto sólido.
+    assert pixels[0][3] == 0
+    assert pixels[1] == (255, 0, 0, 255)
+    # Meio transparente: opaco, mas composto sobre o branco.
+    assert pixels[2][3] == 255
+    assert pixels[2][1] > 100
+
+
+def test_tiff_output_is_compressed_without_loss(tmp_path: Path) -> None:
+    source = tmp_path / "foto.png"
+    Image.new("RGB", (200, 200), (10, 120, 200)).save(source, format="PNG")
+    destination = tmp_path / "foto.tiff"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.info.get("compression") == "tiff_lzw"
+        assert image.getpixel((5, 5)) == (10, 120, 200)
+    assert destination.stat().st_size < 200 * 200 * 3
+
+
+def test_rotated_photo_becomes_an_upright_tiff(tmp_path: Path) -> None:
+    source = _make_rotated_photo(tmp_path / "celular.jpg")
+    destination = tmp_path / "convertida.tiff"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.size == (20, 40)
+        assert image.getexif().get(_ORIENTATION, 1) == 1
+        assert image.info.get("icc_profile")
+
+
+def _make_multipage_tiff(path: Path, pages: int = 3) -> Path:
+    images = [Image.new("RGB", (40, 20 + 10 * index), (40 * index, 80, 200)) for index in range(pages)]
+    images[0].save(path, format="TIFF", save_all=True, append_images=images[1:])
+    return path
+
+
+def _make_animated_gif(path: Path, frames: int = 3) -> Path:
+    images = [Image.new("RGB", (16, 16), (80 * index, 30, 200)) for index in range(frames)]
+    images[0].save(path, format="GIF", save_all=True, append_images=images[1:], duration=120, loop=0)
+    return path
+
+
+def test_multipage_tiff_to_image_goes_into_its_own_folder(tmp_path: Path) -> None:
+    """Como um PDF de várias páginas: nenhuma página é perdida em silêncio."""
+    source = _make_multipage_tiff(tmp_path / "digitalizacao.tif")
+    output_dir = tmp_path / "saida"
+
+    result = ImageConverter().convert(str(source), str(output_dir / "digitalizacao.png"))
+
+    assert result.success, result.error_message
+    folder = output_dir / "digitalizacao"
+    assert result.output_path == str(folder)
+    names = sorted(p.name for p in folder.iterdir())
+    assert names == ["digitalizacao_p01.png", "digitalizacao_p02.png", "digitalizacao_p03.png"]
+    with Image.open(folder / "digitalizacao_p03.png") as image:
+        assert image.size == (40, 40)
+
+
+def test_multipage_tiff_to_tiff_keeps_every_page_in_one_file(tmp_path: Path) -> None:
+    source = _make_multipage_tiff(tmp_path / "digitalizacao.tif")
+    destination = tmp_path / "saida" / "digitalizacao.tiff"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    assert result.output_path == str(destination)
+    with Image.open(destination) as image:
+        assert image.n_frames == 3
+
+
+def test_cancelling_a_multipage_tiff_leaves_nothing_behind(tmp_path: Path) -> None:
+    from app.core.task_context import OperationCancelled
+
+    class _CancelAfterFirstPage:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        def check_cancelled(self) -> None:
+            self.checks += 1
+            if self.checks > 2:
+                raise OperationCancelled()
+
+        def report_step(self, *_args) -> None:
+            pass
+
+        def report(self, *_args) -> None:
+            pass
+
+    source = _make_multipage_tiff(tmp_path / "digitalizacao.tif")
+    output_dir = tmp_path / "saida"
+
+    with pytest.raises(OperationCancelled):
+        ImageConverter().convert(
+            str(source), str(output_dir / "digitalizacao.png"), _CancelAfterFirstPage()
+        )
+
+    assert list(output_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("target", ["gif", "webp"])
+def test_animation_is_kept_when_the_target_can_hold_it(tmp_path: Path, target: str) -> None:
+    source = _make_animated_gif(tmp_path / "animacao.gif")
+    destination = tmp_path / "saida" / f"animacao.{target}"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.n_frames == 3
+
+
+def test_animated_gif_to_png_keeps_the_first_frame(tmp_path: Path) -> None:
+    source = _make_animated_gif(tmp_path / "animacao.gif")
+    destination = tmp_path / "animacao.png"
+
+    result = ImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    assert result.output_path == str(destination)
+    with Image.open(destination) as image:
+        assert getattr(image, "n_frames", 1) == 1
+        assert image.convert("RGB").getpixel((0, 0)) == (0, 30, 200)

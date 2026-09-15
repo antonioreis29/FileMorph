@@ -20,6 +20,7 @@ KNOWN_EXTENSIONS: dict[str, str] = {
     "webp": "imagem",
     "bmp": "imagem",
     "tiff": "imagem",
+    "tif": "imagem",
     "gif": "imagem",
     # PDF
     "pdf": "pdf",

@@ -40,7 +40,7 @@ from app.converters.document_converter import (
     DocxToPdfConverter,
     TextToPdfConverter,
 )
-from app.converters.pdf_converter import ImageToPdfConverter
+from app.converters.pdf_converter import IMAGE_SOURCE_FORMATS, ImageToPdfConverter
 from app.converters.spreadsheet_converter import SpreadsheetToPdfConverter
 from app.core.converter import BaseConverter
 from app.core.merger import (
@@ -79,7 +79,7 @@ class _MergeInputError(Exception):
 
 # Formatos aceitos na entrada. O que não é PDF entra pelo caminho da
 # conversão intermediária descrita no cabeçalho.
-IMAGE_FORMATS: set[str] = {"png", "jpg", "jpeg", "webp"}
+IMAGE_FORMATS: set[str] = set(IMAGE_SOURCE_FORMATS)
 
 
 class PdfMerger(BaseMerger):

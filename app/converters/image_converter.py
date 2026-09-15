@@ -6,10 +6,17 @@ registrado na camada de compatibilidade por
 `app.converters.register_builtin_converters`, o que faz o seletor de
 formato da interface oferecer opções verdadeiras para arquivos de imagem.
 
-Formatos: PNG, JPG/JPEG e WEBP, em qualquer combinação. BMP, TIFF e GIF
-são reconhecidos pelo aplicativo mas ainda não têm conversão — enquanto
-não estiverem implementados e testados aqui, a interface não oferece
-essas conversões, em vez de fingir que elas existem.
+Formatos: PNG, JPG/JPEG, WEBP, BMP, TIFF/TIF e GIF, em qualquer
+combinação.
+
+Arquivos com mais de um quadro seguem a natureza de cada formato:
+
+- TIFF de várias páginas (o formato comum de digitalizações) é tratado
+  como documento: para TIFF, continua um arquivo só com todas as
+  páginas; para qualquer outro formato, vira uma pasta com uma imagem
+  por página, do mesmo jeito que um PDF de várias páginas.
+- GIF, WEBP ou PNG animados continuam animados quando o destino é GIF
+  ou WEBP. Para um formato sem animação, fica o primeiro quadro.
 
 Cuidados que este módulo garante:
 
@@ -29,14 +36,16 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
+from PIL import ExifTags, Image, ImageOps, ImageSequence, UnidentifiedImageError
 
 from app.core.converter import BaseConverter, ConversionResult, refuse_overwriting_source
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.file_utils import (
+    discard_partial_outputs,
     ensure_directory,
     get_extension,
     get_filename,
+    page_destinations,
     temp_output_path,
 )
 from app.utils.logger import get_logger
@@ -45,13 +54,13 @@ logger = get_logger("converters.image")
 
 # Formatos de imagem cobertos. As duas listas ficam separadas porque
 # nem tudo que sabemos ler é oferecido como destino.
-SOURCE_FORMATS: set[str] = {"png", "jpg", "jpeg", "webp"}
+SOURCE_FORMATS: set[str] = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif"}
 
-# 'jpeg' fica de fora dos destinos de propósito: é o mesmo formato que
-# 'jpg', e listar os dois faria o seletor mostrar duas opções idênticas
-# ao usuário. Como extensão de saída pedida explicitamente, porém, ela
-# continua sendo aceita (ver `_WRITABLE_FORMATS`).
-TARGET_FORMATS: set[str] = {"png", "jpg", "webp"}
+# 'jpeg' e 'tif' ficam de fora dos destinos de propósito: são o mesmo
+# formato que 'jpg' e 'tiff', e listar os dois faria o seletor mostrar
+# duas opções idênticas ao usuário. Como extensão de saída pedida
+# explicitamente, porém, continuam sendo aceitas (ver `_WRITABLE_FORMATS`).
+TARGET_FORMATS: set[str] = {"png", "jpg", "webp", "bmp", "tiff", "gif"}
 
 # O nome do formato usado pelo Pillow nem sempre é igual à extensão
 # ('jpg' -> 'JPEG'), então a tradução é explícita. É público porque o
@@ -61,15 +70,30 @@ PILLOW_FORMAT: dict[str, str] = {
     "jpg": "JPEG",
     "jpeg": "JPEG",
     "webp": "WEBP",
+    "bmp": "BMP",
+    "tiff": "TIFF",
+    "tif": "TIFF",
+    "gif": "GIF",
 }
 
-# Extensões de saída que este conversor sabe gravar — inclui o apelido
-# 'jpeg', que não é oferecido no seletor mas funciona se for pedido.
+# Extensões de saída que este conversor sabe gravar — inclui os apelidos
+# 'jpeg' e 'tif', que não são oferecidos no seletor mas funcionam se
+# forem pedidos.
 _WRITABLE_FORMATS: set[str] = set(PILLOW_FORMAT)
 
 # Formatos sem canal de transparência: a imagem precisa ser achatada
-# sobre um fundo antes de salvar, senão o Pillow recusa a gravação.
-_FORMATS_WITHOUT_ALPHA: set[str] = {"jpg", "jpeg"}
+# sobre um fundo antes de salvar. O JPEG recusa a gravação; o BMP aceita
+# e simplesmente descarta o alfa, o que deixaria à mostra a cor que
+# estava "escondida" sob as áreas transparentes.
+FORMATS_WITHOUT_ALPHA: set[str] = {"jpg", "jpeg", "bmp"}
+
+# Destinos que guardam animação num arquivo só.
+_ANIMATED_TARGETS: set[str] = {"gif", "webp"}
+
+# O GIF só conhece pixel totalmente transparente ou totalmente opaco.
+# Um pixel a partir desta opacidade vira opaco (composto sobre o fundo);
+# abaixo dela, transparente.
+_GIF_ALPHA_THRESHOLD = 128
 
 # Cor usada ao achatar transparência (branco é o que o usuário espera
 # ao mandar um PNG recortado virar JPG).
@@ -87,6 +111,12 @@ _MODES_SUPPORTED: dict[str, set[str]] = {
     "jpg": {"L", "RGB", "CMYK"},
     "jpeg": {"L", "RGB", "CMYK"},
     "webp": {"RGB", "RGBA"},
+    "bmp": {"1", "L", "P", "RGB"},
+    # O Pillow reduz RGB e RGBA à paleta de 256 cores do GIF sozinho.
+    "gif": {"1", "L", "P", "RGB", "RGBA"},
+    # Sem 'P': o TIFF grava a paleta, mas não o índice transparente dela.
+    "tiff": {"1", "L", "LA", "I", "I;16", "F", "RGB", "RGBA", "CMYK"},
+    "tif": {"1", "L", "LA", "I", "I;16", "F", "RGB", "RGBA", "CMYK"},
 }
 
 
@@ -108,6 +138,20 @@ def flatten_onto_background(image: Image.Image) -> Image.Image:
     return background
 
 
+def _binary_alpha(image: Image.Image) -> Image.Image:
+    """Prepara a transparência para o GIF, que não tem meio-termo.
+
+    Deixado com o Pillow, todo pixel que não é totalmente transparente
+    vira a própria cor, opaca: a sombra suave de um logotipo sai como uma
+    mancha preta. Aqui o que é quase transparente some, e o resto é
+    composto sobre o fundo antes de perder a transparência parcial.
+    """
+    alpha = image.convert("RGBA").getchannel("A")
+    flat = flatten_onto_background(image)
+    flat.putalpha(alpha.point(lambda value: 255 if value >= _GIF_ALPHA_THRESHOLD else 0))
+    return flat
+
+
 def _prepare_image(image: Image.Image, target_ext: str) -> Image.Image:
     """Ajusta orientação e modo de cor da imagem para o formato de destino."""
     # Fotos de celular costumam vir "deitadas", com a rotação correta
@@ -116,8 +160,10 @@ def _prepare_image(image: Image.Image, target_ext: str) -> Image.Image:
     # `exif_without_orientation`).
     image = ImageOps.exif_transpose(image) or image
 
-    if target_ext in _FORMATS_WITHOUT_ALPHA and has_alpha(image):
+    if target_ext in FORMATS_WITHOUT_ALPHA and has_alpha(image):
         return flatten_onto_background(image)
+    if target_ext == "gif" and has_alpha(image):
+        return _binary_alpha(image)
 
     supported = _MODES_SUPPORTED.get(target_ext, {"RGB", "RGBA"})
     if image.mode in supported:
@@ -178,6 +224,21 @@ def _icc_matches(source_mode: str, target_mode: str) -> bool:
     )
 
 
+def _encoding_options(target_ext: str) -> dict:
+    """Qualidade e compressão de cada formato, sem metadados."""
+    if target_ext in ("jpg", "jpeg"):
+        return {"quality": JPEG_QUALITY, "optimize": True, "progressive": True}
+    if target_ext == "webp":
+        return {"quality": WEBP_QUALITY, "method": 6}
+    if target_ext == "png":
+        return {"optimize": True}
+    if target_ext in ("tiff", "tif"):
+        # Sem compressão, o TIFF de uma foto comum passa fácil de 30 MB.
+        # O LZW não perde nada e todo programa que abre TIFF o entende.
+        return {"compression": "tiff_lzw"}
+    return {}
+
+
 def save_options(
     image: Image.Image, target_ext: str, source: Image.Image | None = None
 ) -> dict:
@@ -187,16 +248,11 @@ def save_options(
     `image` é a imagem que vai ser gravada; `source`, a imagem de onde ela
     saiu, quando são diferentes — é da origem que vêm os metadados.
     """
-    options: dict = {}
+    options = _encoding_options(target_ext)
     source = source if source is not None else image
 
-    if target_ext in ("jpg", "jpeg"):
-        options.update(quality=JPEG_QUALITY, optimize=True, progressive=True)
-    elif target_ext == "webp":
-        options.update(quality=WEBP_QUALITY, method=6)
-    elif target_ext == "png":
-        options.update(optimize=True)
-
+    # O TIFF fica de fora: com a compressão LZW, a gravação passa pelo
+    # libtiff, que recusa os blocos internos do EXIF (câmera e GPS).
     if target_ext in ("jpg", "jpeg", "webp"):
         exif = exif_without_orientation(source)
         if exif:
@@ -214,8 +270,58 @@ def save_options(
     return options
 
 
+def frame_count(image: Image.Image) -> int:
+    return getattr(image, "n_frames", 1)
+
+
+def is_multipage_tiff(image: Image.Image) -> bool:
+    return image.format == "TIFF" and frame_count(image) > 1
+
+
+def _keeps_all_frames(image: Image.Image, target_ext: str) -> bool:
+    """True quando todos os quadros cabem juntos num arquivo de destino."""
+    if frame_count(image) <= 1:
+        return False
+    if image.format == "TIFF":
+        return target_ext in ("tiff", "tif")
+    return target_ext in _ANIMATED_TARGETS
+
+
+def _write_image(
+    image: Image.Image, destination: Path, target_ext: str, all_frames: bool = False
+) -> None:
+    """Grava a imagem de forma atômica: no temporário e só então no nome final.
+
+    Com `all_frames`, o Pillow percorre os quadros sozinho e cada um é
+    convertido por ele; os metadados ficam de fora, porque a rotação do
+    EXIF não é aplicada quadro a quadro e repassá-la mudaria a imagem.
+    """
+    temp_output = temp_output_path(destination)
+    try:
+        if all_frames:
+            image.save(
+                temp_output,
+                format=PILLOW_FORMAT[target_ext],
+                save_all=True,
+                **_encoding_options(target_ext),
+            )
+        else:
+            prepared = _prepare_image(image, target_ext)
+            prepared.save(
+                temp_output,
+                format=PILLOW_FORMAT[target_ext],
+                **save_options(prepared, target_ext, source=image),
+            )
+        temp_output.replace(destination)
+    except BaseException:
+        # Um temporário que sobrou significa falha no meio do caminho;
+        # ele não pode ficar sujando a pasta do usuário.
+        temp_output.unlink(missing_ok=True)
+        raise
+
+
 class ImageConverter(BaseConverter):
-    """Converte imagens entre PNG, JPG/JPEG e WEBP usando Pillow.
+    """Converte imagens entre PNG, JPG, WEBP, BMP, TIFF e GIF usando Pillow.
 
     A interface não sabe (nem precisa saber) que existe Pillow por trás
     disso — ela apenas pede "converta este arquivo para .webp" através
@@ -253,32 +359,37 @@ class ImageConverter(BaseConverter):
         if refused is not None:
             return refused
 
-        temp_output: Path | None = None
+        written: list[Path] = []
+        created_folder: Path | None = None
         try:
-            # A conversão de uma imagem é indivisível: ou vale a pena
-            # começar, ou não. O ponto seguro para desistir é antes de
-            # abrir o arquivo — depois disso, parar no meio só deixaria
-            # trabalho pela metade sem economizar tempo real.
+            # O ponto seguro para desistir de uma imagem é antes de abrir o
+            # arquivo — depois disso, parar no meio só deixaria trabalho
+            # pela metade sem economizar tempo real. Um TIFF de várias
+            # páginas é a exceção: cada página é um ponto seguro.
             context.check_cancelled()
-            ensure_directory(destination.parent)
-
-            # Gravação atômica: escreve no temporário e só então move.
-            temp_output = temp_output_path(destination)
 
             with Image.open(source) as image:
-                prepared = _prepare_image(image, target_ext)
-                prepared.save(
-                    temp_output,
-                    format=PILLOW_FORMAT[target_ext],
-                    **save_options(prepared, target_ext, source=image),
-                )
-
-            temp_output.replace(destination)
-            temp_output = None
+                if is_multipage_tiff(image) and not _keeps_all_frames(image, target_ext):
+                    total = frame_count(image)
+                    created_folder, targets = page_destinations(destination, total)
+                    for index, page in enumerate(ImageSequence.Iterator(image)):
+                        context.check_cancelled()
+                        _write_image(page, targets[index], target_ext)
+                        written.append(targets[index])
+                        context.report_step(index + 1, total)
+                else:
+                    ensure_directory(destination.parent)
+                    _write_image(
+                        image,
+                        destination,
+                        target_ext,
+                        all_frames=_keeps_all_frames(image, target_ext),
+                    )
 
         except OperationCancelled:
-            # Cancelamento não é falha: sobe para a fila tratar, e o
-            # `finally` abaixo ainda apaga o temporário pela metade.
+            # Cancelamento não é falha: as páginas já gravadas saem, e a
+            # fila trata o resto.
+            discard_partial_outputs(written, created_folder)
             raise
         except UnidentifiedImageError:
             return self._failure(
@@ -286,40 +397,38 @@ class ImageConverter(BaseConverter):
                 f"'{get_filename(source)}' não é uma imagem válida ou está corrompido.",
             )
         except PermissionError:
+            discard_partial_outputs(written, created_folder)
             return self._failure(
                 input_path,
                 "Sem permissão para gravar na pasta de destino. "
                 "Escolha outra pasta nas configurações.",
             )
         except OSError as exc:
+            discard_partial_outputs(written, created_folder)
             logger.exception("Erro de sistema ao converter %s", input_path)
             detail = getattr(exc, "strerror", None) or str(exc)
             return self._failure(
                 input_path, f"Não foi possível gravar o arquivo convertido ({detail})."
             )
         except Exception:  # noqa: BLE001 — a UI nunca deve receber um traceback
+            discard_partial_outputs(written, created_folder)
             logger.exception("Falha inesperada ao converter %s", input_path)
             return self._failure(
                 input_path,
                 "Erro inesperado ao converter esta imagem. Veja os logs para detalhes.",
             )
-        finally:
-            # Um temporário que sobrou significa falha no meio do
-            # caminho; ele não pode ficar sujando a pasta do usuário.
-            if temp_output is not None:
-                temp_output.unlink(missing_ok=True)
 
         context.report(100)
         elapsed = time.monotonic() - started_at
+        # Com várias páginas o resultado é a pasta que as contém.
+        produced = created_folder if created_folder is not None else destination
         logger.info(
             "Conversão concluída | Pillow | %s -> %s | %.2fs",
             get_filename(source),
-            get_filename(destination),
+            get_filename(produced),
             elapsed,
         )
-        return ConversionResult(
-            success=True, input_path=input_path, output_path=str(destination)
-        )
+        return ConversionResult(success=True, input_path=input_path, output_path=str(produced))
 
     def _failure(self, input_path: str, message: str) -> ConversionResult:
         logger.warning("Conversão falhou | %s | %s", get_filename(input_path), message)

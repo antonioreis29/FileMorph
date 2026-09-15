@@ -166,6 +166,28 @@ def create_unique_directory(path: str | Path) -> Path:
             candidate = parent / f"{stem} ({counter}){suffix}"
 
 
+def page_destinations(destination: str | Path, page_count: int) -> tuple[Path | None, list[Path]]:
+    """Onde cada página vai ser gravada, e a subpasta criada para elas.
+
+    Uma página: exatamente o caminho pedido, que já passou pelo fluxo de
+    conflito de nomes da interface, e nenhuma pasta nova. Várias páginas:
+    uma subpasta nova com o nome do documento (`relatorio/relatorio_p01.png`),
+    que volta junto para que uma falha consiga removê-la.
+    """
+    destination = Path(destination)
+    if page_count == 1:
+        ensure_directory(destination.parent)
+        return None, [destination]
+
+    stem = get_stem(destination)
+    folder = create_unique_directory(destination.parent / stem)
+    width = max(2, len(str(page_count)))
+    return folder, [
+        folder / f"{stem}_p{number:0{width}d}{destination.suffix}"
+        for number in range(1, page_count + 1)
+    ]
+
+
 def discard_partial_outputs(
     written: Iterable[str | Path], created_folder: str | Path | None = None
 ) -> None:

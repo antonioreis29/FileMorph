@@ -101,6 +101,23 @@ def test_merges_images_into_a_single_pdf(tmp_path: Path) -> None:
     assert _page_widths(destination) == [100, 200, 300]
 
 
+def test_merges_bmp_gif_and_every_page_of_a_tiff(tmp_path: Path) -> None:
+    bmp = tmp_path / "carimbo.bmp"
+    # Sem o dpi explícito o Pillow declara 96, e a página sairia com 75 pt.
+    Image.new("RGB", (100, 50), "red").save(bmp, format="BMP", dpi=(72, 72))
+    gif = tmp_path / "logo.gif"
+    Image.new("RGB", (200, 50), "green").save(gif, format="GIF")
+    tiff = tmp_path / "digitalizacao.tif"
+    pages = [Image.new("RGB", (width, 50), "white") for width in (300, 400)]
+    pages[0].save(tiff, format="TIFF", save_all=True, append_images=pages[1:])
+    destination = tmp_path / "processo.pdf"
+
+    result = PdfMerger().merge([str(bmp), str(gif), str(tiff)], str(destination))
+
+    assert result.success, result.error_message
+    assert _page_widths(destination) == [100, 200, 300, 400]
+
+
 def test_mixes_pdfs_and_images(tmp_path: Path) -> None:
     """Formatos diferentes na mesma junção, via conversão
     intermediária das imagens."""

@@ -34,23 +34,27 @@ import math
 import time
 from pathlib import Path
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 
 from app.converters.image_converter import (
+    FORMATS_WITHOUT_ALPHA,
     PILLOW_FORMAT,
+    SOURCE_FORMATS,
+    TARGET_FORMATS,
     flatten_onto_background,
+    frame_count,
     has_alpha,
+    is_multipage_tiff,
     save_options,
 )
 from app.core.converter import BaseConverter, ConversionResult, refuse_overwriting_source
 from app.core.task_context import NULL_CONTEXT, OperationCancelled, TaskContext
 from app.utils.file_utils import (
-    create_unique_directory,
     discard_partial_outputs,
     ensure_directory,
     get_extension,
     get_filename,
-    get_stem,
+    page_destinations,
     temp_output_path,
 )
 from app.utils.logger import get_logger
@@ -70,11 +74,10 @@ PYMUPDF_AVAILABLE = pymupdf is not None
 
 logger = get_logger("converters.pdf")
 
-# Imagens que sabemos transformar em página de PDF.
-IMAGE_SOURCE_FORMATS: set[str] = {"png", "jpg", "jpeg", "webp"}
-
-# Formatos de imagem que sabemos gerar a partir de um PDF.
-IMAGE_TARGET_FORMATS: set[str] = {"png", "jpg", "webp"}
+# Imagens que sabemos transformar em página de PDF, e formatos de imagem
+# que sabemos gerar a partir de um PDF: os mesmos do conversor de imagens.
+IMAGE_SOURCE_FORMATS: set[str] = set(SOURCE_FORMATS)
+IMAGE_TARGET_FORMATS: set[str] = set(TARGET_FORMATS)
 
 # Resolução usada para rasterizar uma página de PDF. 150 dpi é o meio
 # termo entre legibilidade (dá para ler texto pequeno) e tamanho de
@@ -168,11 +171,15 @@ def _prepare_page(image: Image.Image) -> Image.Image:
 
 
 class ImageToPdfConverter(BaseConverter):
-    """Transforma uma imagem em um PDF de página única (Pillow).
+    """Transforma uma imagem em um PDF (Pillow).
 
     A página fica do tamanho exato da imagem, sem recorte nem
     redimensionamento: se a imagem declara DPI, ele é respeitado; caso
     contrário, assume-se 72 dpi.
+
+    Um TIFF de várias páginas vira um PDF com todas elas, gravadas uma de
+    cada vez — uma digitalização colorida de dezenas de páginas não cabe
+    inteira na memória. Um GIF animado entra só com o primeiro quadro.
     """
 
     @property
@@ -210,8 +217,20 @@ class ImageToPdfConverter(BaseConverter):
             temp_output = temp_output_path(destination)
 
             with Image.open(source) as image:
-                page = _prepare_page(image)
-                page.save(temp_output, format="PDF", resolution=_resolution_for(image))
+                if is_multipage_tiff(image):
+                    total = frame_count(image)
+                    for index, frame in enumerate(ImageSequence.Iterator(image)):
+                        context.check_cancelled()
+                        _prepare_page(frame).save(
+                            temp_output,
+                            format="PDF",
+                            resolution=_resolution_for(frame),
+                            append=index > 0,
+                        )
+                        context.report_step(index + 1, total)
+                else:
+                    page = _prepare_page(image)
+                    page.save(temp_output, format="PDF", resolution=_resolution_for(image))
 
             temp_output.replace(destination)
             temp_output = None
@@ -319,7 +338,7 @@ class PdfToImageConverter(BaseConverter):
             if page_count == 0:
                 return _failure(input_path, f"'{get_filename(source)}' não tem páginas.")
 
-            created_folder, targets = self._page_destinations(destination, page_count)
+            created_folder, targets = page_destinations(destination, page_count)
             for page_number, page_destination in enumerate(targets):
                 # Entre uma página e outra é o ponto seguro para parar:
                 # nada fica gravado pela metade.
@@ -368,29 +387,6 @@ class PdfToImageConverter(BaseConverter):
         produced = written[0] if len(written) == 1 else written[0].parent
         return ConversionResult(success=True, input_path=input_path, output_path=str(produced))
 
-    def _page_destinations(
-        self, destination: Path, page_count: int
-    ) -> tuple[Path | None, list[Path]]:
-        """Onde cada página vai ser gravada, e a subpasta criada para elas.
-
-        Uma página: exatamente o caminho pedido, que já passou pelo
-        fluxo de conflito de nomes da interface, e nenhuma pasta nova.
-        Várias páginas: uma subpasta nova com o nome do documento, que
-        volta junto para que uma falha consiga removê-la."""
-        if page_count == 1:
-            ensure_directory(destination.parent)
-            return None, [destination]
-
-        stem = get_stem(destination)
-        # Criada de forma atômica: dois PDFs do mesmo lote convertidos em
-        # paralelo nunca acabam dividindo a mesma pasta.
-        folder = create_unique_directory(destination.parent / stem)
-        width = max(2, len(str(page_count)))
-        return folder, [
-            folder / f"{stem}_p{number:0{width}d}{destination.suffix}"
-            for number in range(1, page_count + 1)
-        ]
-
     def _render_page(
         self, document, page_number: int, destination: Path, target_ext: str
     ) -> None:
@@ -408,7 +404,7 @@ class PdfToImageConverter(BaseConverter):
         pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
         mode = "RGBA" if pixmap.alpha else "RGB"
         image = Image.frombytes(mode, (pixmap.width, pixmap.height), pixmap.samples)
-        if target_ext in ("jpg", "jpeg") and has_alpha(image):
+        if target_ext in FORMATS_WITHOUT_ALPHA and has_alpha(image):
             image = flatten_onto_background(image)
 
         temp_output = temp_output_path(destination)

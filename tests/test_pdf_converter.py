@@ -93,6 +93,45 @@ def test_image_to_pdf_accepts_transparency(tmp_path: Path) -> None:
     assert destination.is_file()
 
 
+def test_multipage_tiff_becomes_a_pdf_with_every_page(tmp_path: Path) -> None:
+    source = tmp_path / "digitalizacao.tif"
+    pages = [Image.new("RGB", (100, 50 + 50 * index), "white") for index in range(3)]
+    pages[0].save(source, format="TIFF", save_all=True, append_images=pages[1:])
+    destination = tmp_path / "digitalizacao.pdf"
+
+    result = ImageToPdfConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with pymupdf.open(destination) as document:
+        assert document.page_count == 3
+        assert [round(page.rect.height) for page in document] == [50, 100, 150]
+
+
+def test_animated_gif_becomes_a_single_page(tmp_path: Path) -> None:
+    source = tmp_path / "animacao.gif"
+    frames = [Image.new("RGB", (40, 40), color) for color in ("red", "green", "blue")]
+    frames[0].save(source, format="GIF", save_all=True, append_images=frames[1:])
+    destination = tmp_path / "animacao.pdf"
+
+    result = ImageToPdfConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with pymupdf.open(destination) as document:
+        assert document.page_count == 1
+
+
+@pytest.mark.parametrize("target", ["bmp", "tiff", "gif"])
+def test_pdf_to_new_image_formats(tmp_path: Path, target: str) -> None:
+    source = _make_pdf(tmp_path / "pagina.pdf")
+    destination = tmp_path / f"pagina.{target}"
+
+    result = PdfToImageConverter().convert(str(source), str(destination))
+
+    assert result.success, result.error_message
+    with Image.open(destination) as image:
+        assert image.format == target.upper()
+
+
 def test_image_to_pdf_rejects_corrupted_input(tmp_path: Path) -> None:
     broken = tmp_path / "quebrado.png"
     broken.write_bytes(b"nao sou imagem")
@@ -295,12 +334,14 @@ def test_registry_offers_both_directions() -> None:
     assert registry.can_convert("png", "pdf")
     assert registry.can_convert("jpg", "pdf")
     assert registry.can_convert("pdf", "png")
+    images = {"png", "jpg", "webp", "bmp", "tiff", "gif"}
     # O TXT está nesta lista por causa da extração de texto.
-    assert registry.available_targets_for("pdf") == {"png", "jpg", "webp", "txt"}
+    assert registry.available_targets_for("pdf") == images | {"txt"}
     # Imagens agora podem virar PDF, além dos outros formatos de imagem.
-    assert registry.available_targets_for("png") == {"png", "jpg", "webp", "pdf"}
+    assert registry.available_targets_for("png") == images | {"pdf"}
+    assert registry.available_targets_for("tif") == images | {"pdf"}
     # Um PDF e uma imagem juntos só podem ir para o que serve aos dois.
-    assert registry.available_targets_for_many({"pdf", "png"}) == {"png", "jpg", "webp"}
+    assert registry.available_targets_for_many({"pdf", "png"}) == images
     # E o que ainda não existe continua não existindo.
     assert not registry.can_convert("pdf", "docx")
     assert not registry.can_convert("mp4", "pdf")

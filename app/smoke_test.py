@@ -149,7 +149,7 @@ def _run_checks(checks: _Checks, work_dir: Path, report: dict[str, Any]) -> None
         return ", ".join(names)
 
     checks.run("registro das operações", register)
-    checks.run("conversão de imagem (PNG → JPG e WEBP)", lambda: _convert_images(work_dir))
+    checks.run("conversão de imagem (PNG → JPG, WEBP, BMP, TIFF e GIF)", lambda: _convert_images(work_dir))
     checks.run("PDF (imagem → PDF, junção e PDF → imagem)", lambda: _pdf_round_trip(work_dir))
     checks.run("interface (estilo, recursos e janela principal)", _build_interface)
 
@@ -168,12 +168,13 @@ def _convert_images(work_dir: Path) -> str:
     queue = SynchronousTaskQueue()
     processor = FileProcessor(queue)
     output_dir = work_dir / "saída"
-    for target in ("jpg", "webp"):
+    targets = ("jpg", "webp", "bmp", "tiff", "gif")
+    for target in targets:
         processor.convert_batch(BatchRequest([str(source)], target, str(output_dir), "copy"))
 
     results = [event[2] for event in queue.events if event[0] == "finished"]
     failures = [r.error_message for r in results if not r.success]
-    if failures or len(results) != 2:
+    if failures or len(results) != len(targets):
         raise RuntimeError(f"Conversões falharam: {failures or results}")
     produced = []
     for result in results:

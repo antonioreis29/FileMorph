@@ -60,8 +60,8 @@ E em todos eles:
 
 | Tipo | Arquivos que o FileMorph abre | Pode virar |
 |---|---|---|
-| **Imagens** | PNG, JPG (JPEG), WEBP | PNG, JPG, WEBP ou **PDF** |
-| **PDF** | PDF | PNG, JPG, WEBP (uma imagem por página) ou **TXT** (só o texto) |
+| **Imagens** | PNG, JPG (JPEG), WEBP, BMP, TIFF (TIF), GIF | PNG, JPG, WEBP, BMP, TIFF, GIF ou **PDF** |
+| **PDF** | PDF | PNG, JPG, WEBP, BMP, TIFF, GIF (uma imagem por página) ou **TXT** (só o texto) |
 | **Documentos** | DOCX (Word) | TXT ou PDF ¹ |
 | | TXT (texto) | DOCX ou PDF |
 | **Planilhas** | XLSX (Excel) | CSV ou PDF ¹ |
@@ -72,12 +72,9 @@ E em todos eles:
 ¹ Precisa do programa gratuito **LibreOffice** instalado (veja [Programas opcionais](#programas-opcionais)).
 ² Precisa do programa gratuito **FFmpeg** instalado (veja [Programas opcionais](#programas-opcionais)).
 
-**No modo JUNTAR** entram PDF, PNG, JPG, WEBP e TXT — e também DOCX e XLSX, se o LibreOffice estiver instalado.
+**No modo JUNTAR** entram PDF, PNG, JPG, WEBP, BMP, TIFF, GIF e TXT — e também DOCX e XLSX, se o LibreOffice estiver instalado.
 
 **No modo ORGANIZAR** entram arquivos PDF.
-
-> BMP, TIFF e GIF são reconhecidos pelo FileMorph, mas ainda não têm conversão.
-> Se você adicioná-los, o aplicativo avisa que não há formato disponível para eles.
 
 ---
 
@@ -169,12 +166,14 @@ De cima para baixo:
 
 O que é bom saber:
 
-- **Arquivos de tipos diferentes na mesma lista:** o seletor só mostra os formatos que servem para **todos** eles. Ex.: com uma foto PNG e um PDF, as opções são PNG, JPG e WEBP.
+- **Arquivos de tipos diferentes na mesma lista:** o seletor só mostra os formatos que servem para **todos** eles. Ex.: com uma foto PNG e um PDF, as opções são PNG, JPG, WEBP, BMP, TIFF e GIF.
 - **O nome é mantido**, só muda a extensão: `ferias.jpg` vira `ferias.png`.
 - **Já existe um arquivo com esse nome?** O FileMorph pergunta se deve **Substituir** ou **Criar cópia** (que ganha um número: `ferias (1).png`).
 - **Arquivos com o mesmo nome, de pastas diferentes**, nunca gravam um por cima do outro: `C:\A\foto.jpg` e `C:\B\foto.png` convertidos para WEBP viram `foto.webp` e `foto (1).webp` — inclusive quando são convertidos ao mesmo tempo.
 - **Um arquivo da própria lista nunca é substituído**, nem se você escolher "Substituir": o resultado vira uma cópia numerada.
 - **PDF com várias páginas → imagens:** as imagens vão para uma pasta com o nome do PDF, uma por página (`relatorio/relatorio_p01.png`, `relatorio_p02.png`...).
+- **TIFF com várias páginas** (comum em digitalizações): para PNG, JPG, WEBP, BMP ou GIF, funciona como o PDF — uma pasta com uma imagem por página. Para TIFF, continua um arquivo só, com todas as páginas. Para PDF, vira um PDF com todas as páginas.
+- **GIF animado:** continua animado se o destino for GIF ou WEBP. Nos outros formatos (e no PDF), fica só o primeiro quadro.
 - **Planilha com várias abas → CSV:** vira uma pasta com um CSV por aba — inclusive as abas ocultas.
 
 ### Juntar arquivos em um PDF
@@ -189,6 +188,7 @@ O que é bom saber:
 - **A ordem da lista é a ordem do PDF final.** Os arquivos entram na ordem em que foram adicionados.
   Para acertar a ordem depois, use o modo **Organizar** no PDF gerado.
 - Pode misturar tipos: PDF, imagens e textos no mesmo documento — e DOCX e XLSX, com o LibreOffice instalado.
+- Um TIFF de várias páginas entra com todas elas; um GIF animado entra só com o primeiro quadro.
 - PDFs protegidos por senha não podem ser juntados.
 - O PDF final **não pode ter o nome de um dos arquivos que estão sendo juntados** (ele seria substituído). Se você escolher um desses nomes, o FileMorph pede outro.
 
@@ -251,6 +251,9 @@ Arraste o PDF → modo **CONVERTER** → **JPG** → **CONVERTER ARQUIVOS**. Um 
 **Montar um documento único para enviar**
 Arraste, nesta ordem, `contrato.pdf`, `rg.jpg` e `comprovante.png` → modo **JUNTAR** → **JUNTAR ARQUIVOS** → salve como `processo.pdf`.
 
+**Transformar uma digitalização TIFF em PDF**
+Arraste o arquivo TIFF → modo **CONVERTER** → **PDF** → **CONVERTER ARQUIVOS**. Um TIFF de 10 páginas vira um PDF de 10 páginas.
+
 **Reorganizar as páginas de um PDF**
 Um PDF tem as páginas **1, 2, 3, 4** e você quer **3, 1, 4, 2**:
 
@@ -308,6 +311,9 @@ como você deixou.
 **Imagens**
 
 - Fotos de celular que aparecem "deitadas" são giradas de verdade no arquivo novo, e a informação de giro sai dos dados da foto — assim ela não é girada duas vezes em outros programas. Data, câmera e localização da foto são mantidas nos formatos JPG e WEBP.
+- **BMP** não tem transparência: as áreas transparentes de um PNG viram fundo branco (o mesmo acontece no JPG).
+- **GIF** tem no máximo 256 cores, então fotos perdem um pouco de qualidade, e um pixel só pode ser totalmente transparente ou totalmente opaco: sombras e bordas suaves de um PNG recortado ficam serrilhadas.
+- **TIFF** é gravado com compressão sem perda (LZW), mas sem os dados da foto (data, câmera e localização).
 
 **PDF**
 
@@ -335,7 +341,7 @@ como você deixou.
 ## Dúvidas comuns
 
 **Aparece "Nenhum formato disponível ainda". Por quê?**
-Não existe uma conversão que sirva para todos os arquivos da lista. Isso acontece com formatos ainda sem conversão (BMP, TIFF, GIF), com tipos que não combinam (ex.: um vídeo e uma planilha juntos) ou com áudio e vídeo sem o FFmpeg instalado.
+Não existe uma conversão que sirva para todos os arquivos da lista. Isso acontece com tipos que não combinam (ex.: um vídeo e uma planilha juntos) ou com áudio e vídeo sem o FFmpeg instalado.
 
 **O botão principal está apagado.**
 Pare o mouse sobre ele para ver o motivo. Os mais comuns: a lista está vazia; no modo Juntar há só um arquivo; no modo Organizar há mais de um arquivo na lista ou o arquivo não é PDF.
